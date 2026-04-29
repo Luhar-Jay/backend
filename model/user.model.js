@@ -120,7 +120,14 @@ const userSchema = new mongoose.Schema(
       ref: "User",
       default: null,
     },
+    /** The organization this user created and owns (admin context). */
     organization: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Organization",
+      default: null,
+    },
+    /** The organization this user joined as a member/employee (not as owner). */
+    memberOrganization: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Organization",
       default: null,

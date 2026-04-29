@@ -47,6 +47,46 @@ export const createOrganization = async (req, res) => {
   }
 };
 
+// GET /organization/my-context — returns both the org the user owns and the org they joined
+export const getMyOrgContext = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const populate = [
+      { path: "createdBy", select: "name email profileImage role" },
+      { path: "members", select: "name email profileImage role" },
+    ];
+
+    // Org this user owns (created)
+    const ownedOrg = await Organization.findOne({ createdBy: userId })
+      .populate(populate);
+
+    // Org this user joined as a member (not as owner).
+    // Check new `memberOrganization` field first; fall back to legacy `organization` field
+    // for users whose records pre-date this change.
+    const user = await User.findById(userId).select("memberOrganization organization");
+    let memberOrg = null;
+
+    const memberOrgId = user?.memberOrganization || user?.organization;
+    if (memberOrgId) {
+      const candidate = await Organization.findOne({
+        _id: memberOrgId,
+        createdBy: { $ne: userId }, // must be someone else's org
+        members: userId,
+      }).populate(populate);
+      memberOrg = candidate || null;
+    }
+
+    return res.status(200).json({ success: true, ownedOrg: ownedOrg || null, memberOrg: memberOrg || null });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch organization context",
+      error: error.message,
+    });
+  }
+};
+
 // GET /organization/my — get the organization the current user belongs to
 export const getMyOrganization = async (req, res) => {
   try {
@@ -224,7 +264,8 @@ export const acceptInvite = async (req, res) => {
       updatedBy: invite.invitedBy,
     });
 
-    await User.findByIdAndUpdate(userId, { organization: invite.organization });
+    // Store in memberOrganization so it doesn't overwrite the user's own org (if they have one)
+    await User.findByIdAndUpdate(userId, { memberOrganization: invite.organization });
 
     invite.status = "accepted";
     await invite.save();
@@ -450,8 +491,9 @@ export const acceptJoinRequest = async (req, res) => {
       updatedBy: adminId,
     });
 
+    // Store in memberOrganization so it doesn't overwrite the user's own org (if they have one)
     await User.findByIdAndUpdate(joinRequest.requestedBy, {
-      organization: org._id,
+      memberOrganization: org._id,
     });
 
     joinRequest.status = "accepted";
@@ -511,6 +553,29 @@ export const rejectJoinRequest = async (req, res) => {
   }
 };
 
+// GET /organization/invitable-users — returns all DB users the admin can invite
+// (anyone not already a member of the admin's org, and not the admin themselves)
+export const getInvitableUsers = async (req, res) => {
+  try {
+    const adminId = req.user._id;
+
+    const org = await Organization.findOne({ createdBy: adminId });
+    const excludeIds = org ? [...org.members.map(String), String(adminId)] : [String(adminId)];
+
+    const users = await User.find({ _id: { $nin: excludeIds } }).select(
+      "_id name email profileImage role"
+    );
+
+    return res.status(200).json({ success: true, users });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch invitable users",
+      error: error.message,
+    });
+  }
+};
+
 // DELETE /organization/:orgId/members/:userId — admin removes a member
 export const removeMember = async (req, res) => {
   try {
@@ -537,7 +602,10 @@ export const removeMember = async (req, res) => {
       updatedBy: adminId,
     });
 
-    await User.findByIdAndUpdate(userId, { organization: null });
+    // Clear whichever org reference points to this org
+    await User.findByIdAndUpdate(userId, {
+      $unset: { memberOrganization: "", organization: "" },
+    });
 
     return res.status(200).json({
       success: true,

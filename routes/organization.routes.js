@@ -2,7 +2,9 @@ import express from "express";
 import {
   createOrganization,
   getMyOrganization,
+  getMyOrgContext,
   getAllOrganizations,
+  getInvitableUsers,
   sendInvite,
   getAdminInvites,
   getMyInvites,
@@ -38,6 +40,14 @@ router.post(
 );
 
 router.get("/my", authenticateMiddleware, getMyOrganization);
+router.get("/my-context", authenticateMiddleware, getMyOrgContext);
+
+router.get(
+  "/invitable-users",
+  authenticateMiddleware,
+  authorize("admin", "super-admin"),
+  getInvitableUsers
+);
 
 router.get("/all", authenticateMiddleware, getAllOrganizations);
 
