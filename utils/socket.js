@@ -84,7 +84,10 @@ export function initSocket(httpServer) {
           message,
         });
 
-        const populated = await chatMessage.populate("sender", "name profileImage");
+        const populated = await chatMessage.populate([
+          { path: "sender", select: "name profileImage" },
+          { path: "receiver", select: "name profileImage" },
+        ]);
 
         io.to(receiverId).emit("message:receive", populated);
         io.to(userId).emit("message:receive", populated);

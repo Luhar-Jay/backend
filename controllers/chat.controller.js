@@ -1,6 +1,7 @@
 import ChatMessage from "../model/chat.model.js";
 import User from "../model/user.model.js";
 import { getOnlineUsers } from "../utils/socket.js";
+import { getOrgCreatorUserIds, resolveOrgAdminId } from "../utils/teamScope.js";
 
 // GET /api/v1/chat/:receiverId — paginated message history between two users
 export const getMessages = async (req, res) => {
@@ -46,33 +47,33 @@ export const getChatUsers = async (req, res) => {
     const currentUser = req.user;
     const role = Array.isArray(currentUser.role) ? currentUser.role[0] : currentUser.role;
 
-    let query = { isActive: true };
+    let userIds = null; // null means "all" (super-admin only)
 
     if (role === "super-admin") {
-      // Super-admin sees everyone
+      // Super-admin sees everyone — leave userIds as null
     } else if (role === "admin") {
-      // Admin sees users they manage + themselves
-      query = {
-        isActive: true,
-        $or: [{ _id: currentUser._id }, { managedBy: currentUser._id }],
-      };
+      // Admin sees all org members: users they directly manage AND users who
+      // joined via invite/join-request (stored in Organization.members)
+      userIds = await getOrgCreatorUserIds(currentUser._id);
     } else {
-      // Employee/HR/Manager: find their admin, then show all users under that admin + the admin
-      const adminId = currentUser.managedBy;
-      if (adminId) {
-        query = {
-          isActive: true,
-          $or: [{ _id: adminId }, { managedBy: adminId }],
-        };
+      // Employee/HR/Manager: resolve their org admin, then load that full org
+      const orgAdminId = resolveOrgAdminId(currentUser);
+      if (orgAdminId) {
+        userIds = await getOrgCreatorUserIds(orgAdminId);
       } else {
-        // No managedBy set — only show themselves
-        query = { isActive: true, _id: currentUser._id };
+        // No org linkage — only show themselves
+        userIds = [currentUser._id];
       }
     }
+
+    const query = userIds
+      ? { isActive: true, _id: { $in: userIds } }
+      : { isActive: true };
 
     const users = await User.find(query)
       .select("name email profileImage role isActive")
       .lean();
+
     res.json({ success: true, users });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

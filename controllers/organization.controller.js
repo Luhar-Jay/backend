@@ -77,6 +77,23 @@ export const getMyOrgContext = async (req, res) => {
       memberOrg = candidate || null;
     }
 
+    // Retroactive fix: ensure every org member has managedBy pointing to this admin.
+    // This silently repairs members who joined before the managedBy field was set
+    // (e.g. via the old invite/join flow), so they appear correctly in task
+    // assignment lists, employee screens, and chat.
+    if (ownedOrg) {
+      const memberIds = ownedOrg.members
+        .map((m) => (m._id ? m._id : m))
+        .filter((id) => id.toString() !== userId.toString());
+
+      if (memberIds.length > 0) {
+        await User.updateMany(
+          { _id: { $in: memberIds }, managedBy: null },
+          { $set: { managedBy: userId, role: ["employee"] } }
+        );
+      }
+    }
+
     return res.status(200).json({ success: true, ownedOrg: ownedOrg || null, memberOrg: memberOrg || null });
   } catch (error) {
     return res.status(500).json({
@@ -264,8 +281,13 @@ export const acceptInvite = async (req, res) => {
       updatedBy: invite.invitedBy,
     });
 
-    // Store in memberOrganization so it doesn't overwrite the user's own org (if they have one)
-    await User.findByIdAndUpdate(userId, { memberOrganization: invite.organization });
+    // Store in memberOrganization so it doesn't overwrite the user's own org (if they have one).
+    // Also assign the employee role and link them to the admin who invited them.
+    await User.findByIdAndUpdate(userId, {
+      memberOrganization: invite.organization,
+      role: ["employee"],
+      managedBy: invite.invitedBy,
+    });
 
     invite.status = "accepted";
     await invite.save();
@@ -491,9 +513,12 @@ export const acceptJoinRequest = async (req, res) => {
       updatedBy: adminId,
     });
 
-    // Store in memberOrganization so it doesn't overwrite the user's own org (if they have one)
+    // Store in memberOrganization so it doesn't overwrite the user's own org (if they have one).
+    // Also assign the employee role and link them to the org admin.
     await User.findByIdAndUpdate(joinRequest.requestedBy, {
       memberOrganization: org._id,
+      role: ["employee"],
+      managedBy: adminId,
     });
 
     joinRequest.status = "accepted";
@@ -602,9 +627,11 @@ export const removeMember = async (req, res) => {
       updatedBy: adminId,
     });
 
-    // Clear whichever org reference points to this org
+    // Clear org membership, restore the standalone admin role, and unlink from the org admin.
     await User.findByIdAndUpdate(userId, {
       $unset: { memberOrganization: "", organization: "" },
+      role: ["admin"],
+      managedBy: null,
     });
 
     return res.status(200).json({
