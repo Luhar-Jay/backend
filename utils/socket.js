@@ -67,26 +67,34 @@ export function initSocket(httpServer) {
     io.emit("user:online", { userId });
     socket.join(userId);
 
-    socket.on("message:send", async ({ receiverId, message }, callback) => {
+    socket.on("message:send", async ({ receiverId, message, attachments, replyToId }, callback) => {
       try {
-        if (!receiverId || !message?.trim()) {
+        const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+        if (!receiverId || (!message?.trim() && !hasAttachments)) {
           return callback?.({ success: false, error: "Invalid data" });
         }
         if (receiverId === userId) {
           return callback?.({ success: false, error: "Cannot message yourself" });
         }
 
-        message = message.trim();
+        message = message?.trim() ?? "";
 
         const chatMessage = await ChatMessage.create({
           sender: userId,
           receiver: receiverId,
           message,
+          attachments: hasAttachments ? attachments : [],
+          replyTo: replyToId ?? null,
         });
 
         const populated = await chatMessage.populate([
           { path: "sender", select: "name profileImage" },
           { path: "receiver", select: "name profileImage" },
+          {
+            path: "replyTo",
+            select: "_id message attachments sender",
+            populate: { path: "sender", select: "name" },
+          },
         ]);
 
         io.to(receiverId).emit("message:receive", populated);
@@ -112,6 +120,16 @@ export function initSocket(httpServer) {
         { isRead: true }
       );
       io.to(senderId).emit("message:read", { readBy: userId });
+    });
+
+    socket.on("message:delete", ({ messageId, receiverId }) => {
+      // Relay the deletion to the other participant so their UI updates live
+      io.to(receiverId).emit("message:delete", { messageId });
+    });
+
+    socket.on("message:edit", ({ messageId, message, receiverId }) => {
+      // Relay the edit to the other participant so their UI updates live
+      io.to(receiverId).emit("message:edit", { messageId, message });
     });
 
     socket.on("disconnect", async () => {

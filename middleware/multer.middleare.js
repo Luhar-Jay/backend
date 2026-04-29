@@ -20,5 +20,17 @@ const imageStorage = new CloudinaryStorage({
   },
 });
 
+const chatFileStorage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: "TMS_uploads/chat",
+    resource_type: "auto",
+  },
+});
+
 export const upload = multer({ storage: resumeStorage });
 export const uploadImage = multer({ storage: imageStorage });
+export const uploadChatFile = multer({
+  storage: chatFileStorage,
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB
+});

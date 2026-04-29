@@ -14,12 +14,35 @@ const chatMessageSchema = new mongoose.Schema(
     },
     message: {
       type: String,
-      required: true,
+      default: "",
       trim: true,
     },
     isRead: {
       type: Boolean,
       default: false,
+    },
+    deletedFor: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+    isEdited: {
+      type: Boolean,
+      default: false,
+    },
+    attachments: [
+      {
+        url: { type: String, required: true },
+        name: { type: String, required: true },
+        mimeType: { type: String, required: true },
+        size: { type: Number, required: true },
+      },
+    ],
+    replyTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ChatMessage",
+      default: null,
     },
   },
   { timestamps: true },
