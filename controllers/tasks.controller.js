@@ -8,9 +8,26 @@ import {
   userBelongsToOrg,
 } from "../utils/teamScope.js";
 
-async function getOrgProjectIds(orgAdminId) {
+async function getOrgProjectIds(orgAdminId, excludeUserId = null) {
   if (!orgAdminId) return [];
-  const creatorIds = await getOrgCreatorUserIds(orgAdminId);
+  let creatorIds = await getOrgCreatorUserIds(orgAdminId);
+
+  // Exclude members who own their own org — their projects belong to their org.
+  const adminStr = orgAdminId.toString();
+  const dualOrgIds = await User.find({
+    _id: { $in: creatorIds },
+    organization: { $exists: true, $ne: null },
+  }).distinct("_id");
+  const dualSet = new Set(
+    dualOrgIds.map((id) => id.toString()).filter((s) => s !== adminStr)
+  );
+  creatorIds = creatorIds.filter((id) => !dualSet.has(id.toString()));
+
+  if (excludeUserId) {
+    creatorIds = creatorIds.filter(
+      (id) => id.toString() !== excludeUserId.toString()
+    );
+  }
   const ids = await Project.find({ user: { $in: creatorIds } }).distinct("_id");
   return ids;
 }
@@ -145,14 +162,20 @@ export const getTasks = async (req, res) => {
     const userRole = Array.isArray(role) ? role[0] : role;
 
     let query = {};
+    const orgContext = req.query.orgContext ?? null;
+    const excludeInMember = orgContext === "member" ? req.user._id : null;
+
+    // In member context, treat the user as an employee (only their assigned tasks)
+    // even if their DB role is admin (because they own a different org).
     let canSeeAll =
-      userRole === "admin" || userRole === "manager" || userRole === "hr";
+      orgContext !== "member" &&
+      (userRole === "admin" || userRole === "manager" || userRole === "hr");
 
     if (userRole === "super-admin") {
       query = {};
     } else {
-      const orgAdminId = resolveOrgAdminId(req.user);
-      const projectIds = await getOrgProjectIds(orgAdminId);
+      const orgAdminId = resolveOrgAdminId(req.user, orgContext);
+      const projectIds = await getOrgProjectIds(orgAdminId, excludeInMember);
       if (canSeeAll) {
         query = { project: { $in: projectIds } };
       } else {
@@ -164,8 +187,8 @@ export const getTasks = async (req, res) => {
       if (userRole === "super-admin") {
         query = { assignedTo: userId };
       } else {
-        const orgAdminId = resolveOrgAdminId(req.user);
-        const projectIds = await getOrgProjectIds(orgAdminId);
+        const orgAdminId = resolveOrgAdminId(req.user, orgContext);
+        const projectIds = await getOrgProjectIds(orgAdminId, excludeInMember);
         query = { assignedTo: userId, project: { $in: projectIds } };
       }
       canSeeAll = false;

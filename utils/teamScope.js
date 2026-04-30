@@ -46,11 +46,19 @@ export async function getOrgCreatorUserIds(orgAdminId) {
  * super-admin → null (global scope)
  * admin       → their own _id
  * others      → their managedBy (the admin who owns them)
+ *
+ * @param {object} reqUser  - The authenticated user attached by middleware.
+ * @param {string|null} orgContext - "member" when the frontend is showing the
+ *   joined-org context (user has two orgs and switched to the one they joined).
+ *   In that case we scope to managedBy instead of _id, even for admins.
  */
-export function resolveOrgAdminId(reqUser) {
+export function resolveOrgAdminId(reqUser, orgContext = null) {
   const role = Array.isArray(reqUser.role) ? reqUser.role[0] : reqUser.role;
   const { _id, managedBy } = reqUser;
   if (role === "super-admin") return null;
+  // When the frontend is in "member" context the user is viewing the org they
+  // joined, not the one they own.  Scope to managedBy (the other org's admin).
+  if (orgContext === "member" && managedBy) return managedBy;
   if (role === "admin") return _id;
   return managedBy || null;
 }

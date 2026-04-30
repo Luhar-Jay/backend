@@ -26,7 +26,7 @@ export const getAssets = async (req, res) => {
   try {
     let filter = {};
     if (req.user.role !== "super-admin") {
-      const orgAdminId = resolveOrgAdminId(req.user);
+      const orgAdminId = resolveOrgAdminId(req.user, req.query.orgContext ?? null);
       if (!orgAdminId) {
         return res.status(200).json({ success: true, assets: [] });
       }

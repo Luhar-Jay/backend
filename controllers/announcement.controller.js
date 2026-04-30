@@ -27,7 +27,7 @@ export const getAnnouncements = async (req, res) => {
     if (req.user.role === "super-admin") {
       // super-admin sees all
     } else {
-      const orgAdminId = resolveOrgAdminId(req.user);
+      const orgAdminId = resolveOrgAdminId(req.user, req.query.orgContext ?? null);
       if (!orgAdminId) {
         return res.status(200).json({ success: true, announcements: [] });
       }

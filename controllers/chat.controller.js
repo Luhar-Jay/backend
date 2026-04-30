@@ -163,21 +163,18 @@ export const getChatUsers = async (req, res) => {
     const currentUser = req.user;
     const role = Array.isArray(currentUser.role) ? currentUser.role[0] : currentUser.role;
 
+    const orgContext = req.query.orgContext ?? null;
     let userIds = null; // null means "all" (super-admin only)
 
     if (role === "super-admin") {
       // Super-admin sees everyone — leave userIds as null
-    } else if (role === "admin") {
-      // Admin sees all org members: users they directly manage AND users who
-      // joined via invite/join-request (stored in Organization.members)
-      userIds = await getOrgCreatorUserIds(currentUser._id);
     } else {
-      // Employee/HR/Manager: resolve their org admin, then load that full org
-      const orgAdminId = resolveOrgAdminId(currentUser);
+      // Resolve the correct org admin based on the active context
+      // (owned org → their own _id, member org → their managedBy)
+      const orgAdminId = resolveOrgAdminId(currentUser, orgContext);
       if (orgAdminId) {
         userIds = await getOrgCreatorUserIds(orgAdminId);
       } else {
-        // No org linkage — only show themselves
         userIds = [currentUser._id];
       }
     }

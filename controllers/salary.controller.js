@@ -3,6 +3,7 @@ import fs from "fs";
 import Salary from "../model/salary.model.js";
 import User from "../model/user.model.js";
 import { generateSalarySlip } from "../utils/generatePdf.js";
+import { getOrgCreatorUserIds, resolveOrgAdminId } from "../utils/teamScope.js";
 
 export const createSalary = async (req, res) => {
   const { employee, month, year, basicSalary, bonus, deductions, payDate } =
@@ -61,14 +62,33 @@ export const getSalary = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
+    const role = Array.isArray(req.user.role) ? req.user.role[0] : req.user.role;
+    const orgContext = req.query.orgContext ?? null;
 
-    const total = await Salary.countDocuments();
-    const totalPages = Math.ceil(total / 10);
+    let filter = {};
+    if (role !== "super-admin") {
+      const orgAdminId = resolveOrgAdminId(req.user, orgContext);
+      if (!orgAdminId) {
+        return res.status(200).json({
+          success: true, message: "Fetched all salary slips",
+          salary: [], total: 0, page: 1, totalPages: 1,
+          hasNextPage: false, hasPreviousPage: false, nextPage: null, previousPage: null,
+        });
+      }
+      let orgUserIds = await getOrgCreatorUserIds(orgAdminId);
+      if (orgContext === "member") {
+        orgUserIds = orgUserIds.filter((id) => id.toString() !== req.user._id.toString());
+      }
+      filter.employee = { $in: orgUserIds };
+    }
+
+    const total = await Salary.countDocuments(filter);
+    const totalPages = Math.max(1, Math.ceil(total / limit));
     const hasNextPage = page < totalPages;
     const hasPreviousPage = page > 1;
     const nextPage = hasNextPage ? page + 1 : null;
     const previousPage = hasPreviousPage ? page - 1 : null;
-    const salary = await Salary.find()
+    const salary = await Salary.find(filter)
       .skip(skip)
       .limit(limit)
       .sort({ createdAt: -1 })

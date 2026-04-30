@@ -1,6 +1,7 @@
 import Attendance from "../model/attendence.model.js";
 import { calculateWorkingTime } from "../utils/calculateWorkingTime.js";
 import { formatDuration } from "../utils/timeFormatter.js";
+import { getOrgCreatorUserIds, resolveOrgAdminId } from "../utils/teamScope.js";
 
 function startOfToday() {
   const d = new Date();
@@ -263,6 +264,7 @@ const MAX_ATTENDANCE_RANGE_DAYS = 62;
 export const getAttendance = async (req, res) => {
   try {
     const { _id: userId, role } = req.user;
+    const orgContext = req.query.orgContext ?? null;
 
     const dateQ = parseLocalDateQuery(req.query.date);
     const fromQ = parseLocalDateQuery(req.query.from);
@@ -277,7 +279,18 @@ export const getAttendance = async (req, res) => {
 
     const hasRange = Boolean(fromQ && toQ);
 
-    const canSeeAll = role === "admin" || role === "super-admin";
+    // Admin/super-admin can see team-wide data, but only when in their owned-org context.
+    // When in "member" context (viewing a joined org) they act as an employee.
+    const isSuperAdmin = role === "super-admin";
+    const canSeeAll =
+      isSuperAdmin || ((role === "admin") && orgContext !== "member");
+
+    // Resolve org-scoped user list for non-super-admins who can see all
+    let orgUserIds = null;
+    if (canSeeAll && !isSuperAdmin) {
+      const orgAdminId = resolveOrgAdminId(req.user, orgContext);
+      orgUserIds = orgAdminId ? await getOrgCreatorUserIds(orgAdminId) : null;
+    }
 
     let attendance;
     let day;
@@ -303,9 +316,9 @@ export const getAttendance = async (req, res) => {
       dateTo = toQ;
 
       if (canSeeAll) {
-        attendance = await Attendance.find({
-          date: { $gte: dateFrom, $lte: dateTo },
-        })
+        const filter = { date: { $gte: dateFrom, $lte: dateTo } };
+        if (orgUserIds) filter.user = { $in: orgUserIds };
+        attendance = await Attendance.find(filter)
           .sort({ date: 1, createdAt: -1 })
           .populate("user", "name email role");
       } else {
@@ -327,7 +340,9 @@ export const getAttendance = async (req, res) => {
       dateTo = day;
 
       if (canSeeAll) {
-        attendance = await Attendance.find({ date: day })
+        const filter = { date: day };
+        if (orgUserIds) filter.user = { $in: orgUserIds };
+        attendance = await Attendance.find(filter)
           .sort({ createdAt: -1 })
           .populate("user", "name email role");
       } else {

@@ -1,5 +1,6 @@
 import Leave from "../model/leave.model.js";
 import User from "../model/user.model.js";
+import { getOrgCreatorUserIds, resolveOrgAdminId } from "../utils/teamScope.js";
 import { leaveRequestTemplate } from "../utils/mailService/leaveRequestTemplate.js";
 import { leaveStatusTemplate } from "../utils/mailService/leaveStatusTemplat.js";
 import { sendEmail } from "../utils/mailService/sendMail.js";
@@ -430,10 +431,28 @@ export const getLeaveHistory = async (req, res) => {
   }
 };
 
-/** All pending requests company-wide — for HR / admin review queues. */
+/** Pending requests scoped to the admin's own org. */
 export const getPendingLeaveRequests = async (req, res) => {
   try {
-    const leaves = await Leave.find({ status: "pending" })
+    const role = Array.isArray(req.user.role) ? req.user.role[0] : req.user.role;
+    const orgContext = req.query.orgContext ?? null;
+
+    let filter = { status: "pending" };
+
+    if (role !== "super-admin") {
+      const orgAdminId = resolveOrgAdminId(req.user, orgContext);
+      if (!orgAdminId) {
+        return res.status(200).json({ success: true, message: "Pending leave requests fetched successfully", leaves: [] });
+      }
+      let orgUserIds = await getOrgCreatorUserIds(orgAdminId);
+      // In member context exclude own leaves (they belong to owned-org scope)
+      if (orgContext === "member") {
+        orgUserIds = orgUserIds.filter((id) => id.toString() !== req.user._id.toString());
+      }
+      filter.user = { $in: orgUserIds };
+    }
+
+    const leaves = await Leave.find(filter)
       .populate("user", "name email")
       .sort({ createdAt: -1 })
       .lean();

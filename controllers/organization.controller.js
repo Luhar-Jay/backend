@@ -81,16 +81,33 @@ export const getMyOrgContext = async (req, res) => {
     // This silently repairs members who joined before the managedBy field was set
     // (e.g. via the old invite/join flow), so they appear correctly in task
     // assignment lists, employee screens, and chat.
+    // IMPORTANT: Only set role:"employee" for members who do NOT own their own org.
+    // Members who own an org are admins there — their global role must stay "admin".
     if (ownedOrg) {
       const memberIds = ownedOrg.members
         .map((m) => (m._id ? m._id : m))
         .filter((id) => id.toString() !== userId.toString());
 
       if (memberIds.length > 0) {
+        // Members without their own org → set employee role + managedBy
         await User.updateMany(
-          { _id: { $in: memberIds }, managedBy: null },
+          { _id: { $in: memberIds }, managedBy: null, organization: null },
           { $set: { managedBy: userId, role: ["employee"] } }
         );
+        // Members who own their own org → only set managedBy, preserve admin role
+        await User.updateMany(
+          { _id: { $in: memberIds }, managedBy: null, organization: { $ne: null } },
+          { $set: { managedBy: userId } }
+        );
+      }
+    }
+
+    // Self-healing: if this user owns an org but their role was incorrectly set to
+    // "employee" (e.g. by a previous bug), restore it to "admin".
+    if (ownedOrg) {
+      const currentUser = await User.findById(userId).select("role");
+      if (currentUser && (!currentUser.role.includes("admin") && !currentUser.role.includes("super-admin"))) {
+        await User.findByIdAndUpdate(userId, { role: ["admin"] });
       }
     }
 
@@ -283,11 +300,17 @@ export const acceptInvite = async (req, res) => {
 
     // Store in memberOrganization so it doesn't overwrite the user's own org (if they have one).
     // Also assign the employee role and link them to the admin who invited them.
-    await User.findByIdAndUpdate(userId, {
+    // IMPORTANT: Only change role to "employee" if the user does NOT already own their own org.
+    // If they own an org they are an admin there, and we must not corrupt that global role.
+    const invitedUserDoc = await User.findById(userId).select("organization");
+    const inviteUpdateData = {
       memberOrganization: invite.organization,
-      role: ["employee"],
       managedBy: invite.invitedBy,
-    });
+    };
+    if (!invitedUserDoc?.organization) {
+      inviteUpdateData.role = ["employee"];
+    }
+    await User.findByIdAndUpdate(userId, inviteUpdateData);
 
     invite.status = "accepted";
     await invite.save();
@@ -515,11 +538,16 @@ export const acceptJoinRequest = async (req, res) => {
 
     // Store in memberOrganization so it doesn't overwrite the user's own org (if they have one).
     // Also assign the employee role and link them to the org admin.
-    await User.findByIdAndUpdate(joinRequest.requestedBy, {
+    // IMPORTANT: Only change role to "employee" if the user does NOT already own their own org.
+    const requestingUserDoc = await User.findById(joinRequest.requestedBy).select("organization");
+    const joinUpdateData = {
       memberOrganization: org._id,
-      role: ["employee"],
       managedBy: adminId,
-    });
+    };
+    if (!requestingUserDoc?.organization) {
+      joinUpdateData.role = ["employee"];
+    }
+    await User.findByIdAndUpdate(joinRequest.requestedBy, joinUpdateData);
 
     joinRequest.status = "accepted";
     await joinRequest.save();

@@ -601,11 +601,18 @@ export const getAllUsers = async (req, res) => {
     if (actorRole === "super-admin") {
       query = {};
     } else if (actorRole === "admin") {
-      query = {
-        $or: [{ _id: req.user._id }, { managedBy: req.user._id }],
-      };
+      // If the admin is viewing their joined-org context, scope to that org's users.
+      if (req.query.orgContext === "member" && req.user.managedBy) {
+        query = {
+          $or: [{ _id: req.user._id }, { managedBy: req.user.managedBy }],
+        };
+      } else {
+        query = {
+          $or: [{ _id: req.user._id }, { managedBy: req.user._id }],
+        };
+      }
     } else if (actorRole === "hr") {
-      const orgAdminId = resolveOrgAdminId(req.user);
+      const orgAdminId = resolveOrgAdminId(req.user, req.query.orgContext ?? null);
       if (!orgAdminId) {
         query = { _id: req.user._id };
       } else {
