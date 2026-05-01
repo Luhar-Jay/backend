@@ -30,10 +30,14 @@ export const createProject = async (req, res) => {
   const userId = req.user._id;
   try {
     const { projectName, description } = req.body;
+    const orgContext = req.query.orgContext ?? null;
+    const orgAdmin = resolveOrgAdminId(req.user, orgContext);
+
     const project = await Project.create({
       projectName,
       description,
       user: userId,
+      orgAdmin,
     });
     return res.status(201).json({
       success: true,
@@ -61,18 +65,23 @@ export const getAllProjects = async (req, res) => {
       if (!orgAdminId) {
         filter = { _id: { $exists: false } };
       } else {
+        // Build legacy user-based fallback for projects without orgAdmin field
         let creatorIds = await getOrgCreatorUserIds(orgAdminId);
-        // Always exclude members who own their own org — their projects belong
-        // to their org, not this one.  The orgAdmin itself is preserved.
         creatorIds = await excludeDualOrgMembers(creatorIds, orgAdminId);
-        // In member context also exclude the current user (self) since they
-        // own a different org and their projects should not appear here.
         if (req.query.orgContext === "member") {
           creatorIds = creatorIds.filter(
             (id) => id.toString() !== req.user._id.toString()
           );
         }
-        filter = { user: { $in: creatorIds } };
+
+        // Primary: projects with explicit orgAdmin (new projects)
+        // Fallback: legacy projects without orgAdmin, scoped by user membership
+        filter = {
+          $or: [
+            { orgAdmin: orgAdminId },
+            { orgAdmin: null, user: { $in: creatorIds } },
+          ],
+        };
       }
     }
 
@@ -113,20 +122,18 @@ export const getProjectById = async (req, res) => {
     }
 
     if (req.user.role !== "super-admin") {
-      const orgAdminId = resolveOrgAdminId(req.user);
+      const orgAdminId = resolveOrgAdminId(req.user, req.query.orgContext ?? null);
       if (!orgAdminId) {
-        return res.status(403).json({
-          success: false,
-          message: "You are not allowed to view this project",
-        });
+        return res.status(403).json({ success: false, message: "Access denied" });
       }
-      const creatorIds = await getOrgCreatorUserIds(orgAdminId);
-      const allowed = creatorIds.some((id) => id.equals(project.user));
+
+      // Check orgAdmin field first (new projects), fall back to member check
+      const allowed = project.orgAdmin
+        ? project.orgAdmin.toString() === orgAdminId.toString()
+        : (await getOrgCreatorUserIds(orgAdminId)).some((id) => id.equals(project.user));
+
       if (!allowed) {
-        return res.status(403).json({
-          success: false,
-          message: "You are not allowed to view this project",
-        });
+        return res.status(403).json({ success: false, message: "Access denied" });
       }
     }
 
@@ -146,33 +153,26 @@ export const getProjectById = async (req, res) => {
 
 export const updateProject = async (req, res) => {
   const projectId = req.params.id;
-//   const userId = req.user._id;
   const { projectName, description } = req.body;
 
   try {
     const existing = await Project.findById(projectId);
     if (!existing) {
-      return res.status(400).json({
-        success: false,
-        message: "Project not found",
-      });
+      return res.status(400).json({ success: false, message: "Project not found" });
     }
 
     if (req.user.role !== "super-admin") {
-      const orgAdminId = resolveOrgAdminId(req.user);
+      const orgAdminId = resolveOrgAdminId(req.user, req.query.orgContext ?? null);
       if (!orgAdminId) {
-        return res.status(403).json({
-          success: false,
-          message: "You are not allowed to update this project",
-        });
+        return res.status(403).json({ success: false, message: "Access denied" });
       }
-      const creatorIds = await getOrgCreatorUserIds(orgAdminId);
-      const allowed = creatorIds.some((id) => id.equals(existing.user));
+
+      const allowed = existing.orgAdmin
+        ? existing.orgAdmin.toString() === orgAdminId.toString()
+        : (await getOrgCreatorUserIds(orgAdminId)).some((id) => id.equals(existing.user));
+
       if (!allowed) {
-        return res.status(403).json({
-          success: false,
-          message: "You are not allowed to update this project",
-        });
+        return res.status(403).json({ success: false, message: "Access denied" });
       }
     }
 
@@ -197,46 +197,39 @@ export const updateProject = async (req, res) => {
 };
 
 export const deleteProject = async (req, res) => {
-    const projectId = req.params.id
+  const projectId = req.params.id;
 
-    try {
-        const existing = await Project.findById(projectId);
-        if (!existing) {
-            return res.status(400).json({
-                success: false,
-                message: "Project not found",
-            });
-        }
-
-        if (req.user.role !== "super-admin") {
-          const orgAdminId = resolveOrgAdminId(req.user);
-          if (!orgAdminId) {
-            return res.status(403).json({
-              success: false,
-              message: "You are not allowed to delete this project",
-            });
-          }
-          const creatorIds = await getOrgCreatorUserIds(orgAdminId);
-          const allowed = creatorIds.some((id) => id.equals(existing.user));
-          if (!allowed) {
-            return res.status(403).json({
-              success: false,
-              message: "You are not allowed to delete this project",
-            });
-          }
-        }
-
-        const project = await Project.findByIdAndDelete(projectId);
-        return res.status(200).json({
-            success: true,
-            message: "Project deleted successfully",
-            project,
-        })
-    } catch (error) {
-        return res.status(500).json({
-            success: false,
-            message: "Error deleting project",
-            error: error.message,
-          });
+  try {
+    const existing = await Project.findById(projectId);
+    if (!existing) {
+      return res.status(400).json({ success: false, message: "Project not found" });
     }
- }
+
+    if (req.user.role !== "super-admin") {
+      const orgAdminId = resolveOrgAdminId(req.user, req.query.orgContext ?? null);
+      if (!orgAdminId) {
+        return res.status(403).json({ success: false, message: "Access denied" });
+      }
+
+      const allowed = existing.orgAdmin
+        ? existing.orgAdmin.toString() === orgAdminId.toString()
+        : (await getOrgCreatorUserIds(orgAdminId)).some((id) => id.equals(existing.user));
+
+      if (!allowed) {
+        return res.status(403).json({ success: false, message: "Access denied" });
+      }
+    }
+
+    await Project.findByIdAndDelete(projectId);
+    return res.status(200).json({
+      success: true,
+      message: "Project deleted successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error deleting project",
+      error: error.message,
+    });
+  }
+};

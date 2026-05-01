@@ -6,6 +6,7 @@ import {
   getOrgCreatorUserIds,
   resolveOrgAdminId,
   userBelongsToOrg,
+  getEffectiveRole,
 } from "../utils/teamScope.js";
 
 async function getOrgProjectIds(orgAdminId, excludeUserId = null) {
@@ -290,7 +291,7 @@ export const updateTask = async (req, res) => {
       });
     }
 
-    const { status, taskName, priority, description, dueDate, archived, subtasks, timeEstimate, timeLogged } = req.body;
+    const { status, taskName, priority, description, dueDate, archived, subtasks, timeEstimate, timeLogged, project } = req.body;
 
     if (status) {
       // Start work timer when entering in_progress (not on review)
@@ -319,6 +320,7 @@ export const updateTask = async (req, res) => {
     if (subtasks !== undefined) task.subtasks = subtasks;
     if (timeEstimate !== undefined) task.timeEstimate = timeEstimate;
     if (timeLogged !== undefined) task.timeLogged = timeLogged;
+    if (project) task.project = project;
 
     await task.save();
 
@@ -504,6 +506,11 @@ export const deleteComment = async (req, res) => {
       return res.status(404).json({ success: false, message: "Task not found" });
     }
 
+    const allowed = await taskAccessibleByUser(task, req.user);
+    if (!allowed) {
+      return res.status(403).json({ success: false, message: "Not allowed to modify this task" });
+    }
+
     const comment = task.comments.id(commentId);
     if (!comment) {
       return res.status(404).json({ success: false, message: "Comment not found" });
@@ -611,11 +618,11 @@ export const getTaskTemplates = async (req, res) => {
 export const replyQuery = async (req, res) => {
   const {taskId, queryId} = req.params;
   const {reply} = req.body
-  const {role} = req.user
+  const orgContext = req.query.orgContext ?? null;
 
   try {
-    const userRole = Array.isArray(role) ? role[0] : role
-    if(userRole !== "admin" && userRole !== "manager") {
+    const effectiveRole = getEffectiveRole(req.user, orgContext);
+    if (effectiveRole !== "admin" && effectiveRole !== "manager") {
       return res.status(403).json({
         success: false,
         message: "You are not authorized to reply to this query"

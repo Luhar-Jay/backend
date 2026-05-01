@@ -1,5 +1,5 @@
 import TimesheetEntry from "../model/timesheet.model.js";
-import { resolveOrgAdminId, getOrgCreatorUserIds } from "../utils/teamScope.js";
+import { resolveOrgAdminId, getOrgCreatorUserIds, getEffectiveRole } from "../utils/teamScope.js";
 
 export const logTime = async (req, res) => {
   try {
@@ -23,18 +23,19 @@ export const logTime = async (req, res) => {
 
 export const getTimesheets = async (req, res) => {
   try {
-    const { week, year, userId: queryUserId, project, billable } = req.query;
+    const { week, year, userId: queryUserId, project, billable, orgContext } = req.query;
+    const effectiveRole = getEffectiveRole(req.user, orgContext ?? null);
 
     let filter = {};
 
     // Scope by org
-    if (req.user.role === "super-admin") {
+    if (effectiveRole === "super-admin") {
       if (queryUserId) filter.user = queryUserId;
     } else {
-      const orgAdminId = resolveOrgAdminId(req.user);
+      const orgAdminId = resolveOrgAdminId(req.user, orgContext ?? null);
       if (!orgAdminId) return res.status(200).json({ success: true, entries: [] });
 
-      const canViewAll = ["admin", "hr", "manager"].includes(req.user.role);
+      const canViewAll = ["admin", "hr", "manager"].includes(effectiveRole);
       if (canViewAll && queryUserId) {
         // Verify target user is in org
         const creatorIds = await getOrgCreatorUserIds(orgAdminId);
@@ -86,9 +87,10 @@ export const updateTimesheetEntry = async (req, res) => {
       return res.status(404).json({ success: false, message: "Entry not found" });
     }
 
-    // Only owner or admin/hr can update
+    const orgContext = req.query.orgContext ?? null;
+    const effectiveRole = getEffectiveRole(req.user, orgContext);
     const isOwner = existing.user.toString() === req.user._id.toString();
-    const canManage = ["admin", "hr", "super-admin"].includes(req.user.role);
+    const canManage = ["admin", "hr", "super-admin"].includes(effectiveRole);
     if (!isOwner && !canManage) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
@@ -113,8 +115,10 @@ export const deleteTimesheetEntry = async (req, res) => {
       return res.status(404).json({ success: false, message: "Entry not found" });
     }
 
+    const orgContext = req.query.orgContext ?? null;
+    const effectiveRole = getEffectiveRole(req.user, orgContext);
     const isOwner = existing.user.toString() === req.user._id.toString();
-    const canManage = ["admin", "hr", "super-admin"].includes(req.user.role);
+    const canManage = ["admin", "hr", "super-admin"].includes(effectiveRole);
     if (!isOwner && !canManage) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
@@ -128,13 +132,14 @@ export const deleteTimesheetEntry = async (req, res) => {
 
 export const exportTimesheetCsv = async (req, res) => {
   try {
-    const { week, year, userId: queryUserId, project } = req.query;
+    const { week, year, userId: queryUserId, project, orgContext } = req.query;
+    const effectiveRole = getEffectiveRole(req.user, orgContext ?? null);
     let filter = {};
 
-    if (req.user.role !== "super-admin") {
-      const orgAdminId = resolveOrgAdminId(req.user);
+    if (effectiveRole !== "super-admin") {
+      const orgAdminId = resolveOrgAdminId(req.user, orgContext ?? null);
       if (!orgAdminId) return res.status(200).send("No data");
-      const canViewAll = ["admin", "hr", "manager"].includes(req.user.role);
+      const canViewAll = ["admin", "hr", "manager"].includes(effectiveRole);
       if (canViewAll && queryUserId) {
         filter.user = queryUserId;
       } else if (!canViewAll) {

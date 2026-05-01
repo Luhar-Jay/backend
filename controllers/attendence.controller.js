@@ -2,6 +2,7 @@ import Attendance from "../model/attendence.model.js";
 import { calculateWorkingTime } from "../utils/calculateWorkingTime.js";
 import { formatDuration } from "../utils/timeFormatter.js";
 import { getOrgCreatorUserIds, resolveOrgAdminId } from "../utils/teamScope.js";
+import { isHolidayDate } from "./holiday.controller.js";
 
 function startOfToday() {
   const d = new Date();
@@ -42,6 +43,15 @@ export const punchIn = async (req, res) => {
     const userId = req.user._id;
     const today = startOfToday();
 
+    const orgAdminId = resolveOrgAdminId(req.user);
+    const holidayName = await isHolidayDate(orgAdminId, today);
+    if (holidayName) {
+      return res.status(400).json({
+        success: false,
+        message: `Today is ${holidayName} — a company holiday. Enjoy your day off!`,
+      });
+    }
+
     let record = await Attendance.findOne({ user: userId, date: today });
 
     if (
@@ -67,6 +77,7 @@ export const punchIn = async (req, res) => {
       });
     } else {
       if (
+        !record.legacySegmentsMigrated &&
         record.status === "completed" &&
         record.punchInTime &&
         record.punchOutTime &&
@@ -82,6 +93,7 @@ export const punchIn = async (req, res) => {
           },
         ];
         record.dayTotalMs = (record.dayTotalMs || 0) + legacyMs;
+        record.legacySegmentsMigrated = true;
       }
 
       record.punchInTime = new Date();

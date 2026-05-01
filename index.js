@@ -20,8 +20,14 @@ import assetRoutes from "./routes/asset.routes.js";
 import timesheetRoutes from "./routes/timesheet.routes.js";
 import chatRoutes from "./routes/chat.routes.js";
 import organizationRoutes from "./routes/organization.routes.js";
+import holidayRoutes from "./routes/holiday.routes.js";
+import interviewRoutes from "./routes/interview.routes.js";
+import clientRoutes from "./routes/client.routes.js";
+import leadRoutes from "./routes/lead.routes.js";
+import contactLogRoutes from "./routes/contactLog.routes.js";
 import { startReminderJob } from "./jobs/reminderJob.js";
 import { initSocket } from "./utils/socket.js";
+import cookieParser from "cookie-parser";
 
 const app = express();
 // Avoid 304 Not Modified for API JSON responses (frontend expects a body).
@@ -33,7 +39,7 @@ app.use(cors(
     }
 ));
 app.use(express.json());
-
+app.use(cookieParser());
 // Force APIs to be non-cacheable (prevents browser conditional requests / 304s).
 app.use("/api/v1", (_req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
@@ -62,6 +68,11 @@ app.use("/api/v1/assets", assetRoutes);
 app.use("/api/v1/timesheets", timesheetRoutes);
 app.use("/api/v1/chat", chatRoutes);
 app.use("/api/v1/organization", organizationRoutes);
+app.use("/api/v1/holidays", holidayRoutes);
+app.use("/api/v1/interviews", interviewRoutes);
+app.use("/api/v1/clients", clientRoutes);
+app.use("/api/v1/leads", leadRoutes);
+app.use("/api/v1/contact-logs", contactLogRoutes);
 
 const swaggerDocument = generateOpenAPIDocument();
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));

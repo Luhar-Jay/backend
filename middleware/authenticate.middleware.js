@@ -4,7 +4,7 @@ import User from "../model/user.model.js";
 
 export const authenticateMiddleware = async (req, res, next) => {
   try {
-    const token = req.header("Authorization")?.replace("Bearer ", "");
+    const token = req.cookies?.accessToken;
 
     if (!token) {
       return res.status(401).json({
@@ -44,6 +44,21 @@ export const authenticateMiddleware = async (req, res, next) => {
 
     next();
   } catch (error) {
+    const name = error && typeof error === "object" ? error.name : "";
+    if (name === "TokenExpiredError") {
+      return res.status(401).json({
+        success: false,
+        code: "TOKEN_EXPIRED",
+        message: "Access token expired",
+      });
+    }
+    if (name === "JsonWebTokenError") {
+      return res.status(401).json({
+        success: false,
+        code: "INVALID_TOKEN",
+        message: "Invalid or malformed token",
+      });
+    }
     return res.status(500).json({
       success: false,
       message: "Error authenticating user",

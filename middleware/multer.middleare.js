@@ -6,7 +6,7 @@ const resumeStorage = new CloudinaryStorage({
   cloudinary,
   params: {
     folder: "TMS_uploads/resumes",
-    resource_type: "auto",
+    resource_type: "raw",
     allowed_formats: ["pdf", "doc", "docx"],
   },
 });

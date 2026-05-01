@@ -163,7 +163,7 @@ taskSchema.pre("save", async function (next) {
     if (this.status === "completed" && !this.endTime) {
       this.endTime = new Date();
       if (this.startTime) {
-        this.totalTime = this.endTime - this.startTime;
+        this.totalTime = this.endTime.getTime() - this.startTime.getTime();
       }
     }
   }

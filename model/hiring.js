@@ -48,7 +48,17 @@ const hiringSchema = new mongoose.Schema({
     },
     note:{
         type: String
-    }
+    },
+    stage: {
+        type: String,
+        enum: ["applied", "screening", "interview_scheduled", "offer", "hired", "rejected"],
+        default: "applied",
+    },
+    orgAdmin: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null,
+    },
 }, {timestamps: true});
 
 const Hiring = mongoose.model("Hiring", hiringSchema);

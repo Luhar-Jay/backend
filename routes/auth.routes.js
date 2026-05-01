@@ -4,6 +4,7 @@ import {
   deleteUser,
   getAllUsers,
   getTeamBirthdays,
+  getSessionUser,
   getUser,
   googleAuthCallback,
   googleAuthStart,
@@ -24,18 +25,19 @@ import {
   RegisterBodySchema,
   UpdateUserBodySchema,
   UserIdParamSchema,
-  RefreshTokenBodySchema,
 } from '../validation/auth.validation.js';
+import { authLimiter, refreshLimiter } from '../utils/rateLimit.js';
 
 const router = express.Router();
 
-router.post('/register', validate({ body: RegisterBodySchema }), registerUser);
-router.post('/login', validate({ body: LoginBodySchema }), loginUser);
-router.get('/google', googleAuthStart);
-router.get('/google/callback', googleAuthCallback);
+router.post('/register', authLimiter, validate({ body: RegisterBodySchema }), registerUser);
+router.post('/login', authLimiter, validate({ body: LoginBodySchema }), loginUser);
+router.get('/google', authLimiter, googleAuthStart);
+router.get('/google/callback', authLimiter, googleAuthCallback);
 router.get('/verify-email', verifyUserEmail);
 router.post('/logout', authenticateMiddleware, logoutUser);
-router.post('/refresh-token', validate({ body: RefreshTokenBodySchema }), refreshToken);
+router.post('/refresh-token', refreshLimiter, refreshToken);
+router.get('/me', authenticateMiddleware, getSessionUser);
 
 router.post(
   '/create-user',

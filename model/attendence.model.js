@@ -36,7 +36,7 @@ const attendanceSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["not_started", "working", "on_break", "completed"],
+      enum: ["not_started", "working", "on_break", "completed", "holiday"],
       default: "not_started",
     },
     punchInTime: {
@@ -61,6 +61,11 @@ const attendanceSchema = new mongoose.Schema(
     dayTotalMs: {
       type: Number,
       default: 0,
+    },
+    /** Once true, legacy completed-day single-session data was copied into `segments` (punch-in idempotency). */
+    legacySegmentsMigrated: {
+      type: Boolean,
+      default: false,
     },
   },
   { timestamps: true }

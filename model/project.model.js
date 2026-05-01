@@ -7,6 +7,11 @@ const projectSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    orgAdmin: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
     projectName: {
       type: String,
       required: true,

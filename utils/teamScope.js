@@ -85,6 +85,18 @@ export async function userBelongsToOrg(userId, orgAdminId) {
   return !!org;
 }
 
+/**
+ * Returns the effective role for permission checks.
+ * When orgContext === "member", non-super-admin users act as "employee"
+ * regardless of their DB role (they joined that org as a member, not as owner).
+ */
+export function getEffectiveRole(reqUser, orgContext = null) {
+  const role = Array.isArray(reqUser.role) ? reqUser.role[0] : reqUser.role;
+  if (role === "super-admin") return role;
+  if (orgContext === "member") return "employee";
+  return role;
+}
+
 export async function canAccessUserProfile(actor, targetUserId) {
   const actorRole = Array.isArray(actor.role) ? actor.role[0] : actor.role;
   if (actorRole === "super-admin") return true;

@@ -1,7 +1,11 @@
+import crypto from "crypto";
 import User from "../model/user.model.js";
 import Hiring from "../model/hiring.js";
 import cloudinary from "../utils/cloudinary.js";
 import fs from "fs";
+import { resolveOrgAdminId } from "../utils/teamScope.js";
+import { sendEmail } from "../utils/mailService/sendMail.js";
+import { hiringStatusTemplate } from "../utils/mailService/hiringStatusTemplate.js";
 
 export const createHiring = async (req, res) => {
   try {
@@ -32,8 +36,9 @@ export const createHiring = async (req, res) => {
       });
     }
 
-    const userId = req.user?._id; // from authenticateMiddleware
-    console.log("User ID:==>", userId);
+    const userId = req.user?._id;
+    const orgContext = req.query.orgContext ?? null;
+    const orgAdmin = resolveOrgAdminId(req.user, orgContext);
 
     if (!req.file) {
       return res.status(400).json({
@@ -41,13 +46,8 @@ export const createHiring = async (req, res) => {
         message: "Resume file is required",
       });
     }
-    cloudinary.api
-      .ping()
-      .then((res) => console.log("✅ Cloudinary connected:", res))
-      .catch((err) => console.error("❌ Cloudinary connection failed:", err));
 
-    const resumeUrl = req.file.path; // Cloudinary URL
-    console.log("Resume URL:", resumeUrl);
+    const resumeUrl = req.file.path;
 
     const user = await User.findById(userId);
     if (!user) {
@@ -59,6 +59,7 @@ export const createHiring = async (req, res) => {
 
     const hiring = await Hiring.create({
       user: userId,
+      orgAdmin,
       name,
       email,
       phone,
@@ -94,9 +95,15 @@ export const getAllHirings = async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const skip = (page - 1) * limit;
+  const orgContext = req.query.orgContext ?? null;
+
   try {
-    const total = await Hiring.countDocuments();
-    const hiring = await Hiring.find()
+    const orgAdmin = resolveOrgAdminId(req.user, orgContext);
+    // super-admin gets all; everyone else scoped to their org
+    const filter = orgAdmin ? { orgAdmin } : {};
+
+    const total = await Hiring.countDocuments(filter);
+    const hiring = await Hiring.find(filter)
       .skip(skip)
       .limit(limit)
       .sort({ createdAt: -1 });
@@ -130,14 +137,20 @@ export const getAllHirings = async (req, res) => {
 
 export const getHiringById = async (req, res) => {
   const hiringId = req.params.id;
+  const orgContext = req.query.orgContext ?? null;
 
   try {
+    const orgAdmin = resolveOrgAdminId(req.user, orgContext);
     const hiring = await Hiring.findById(hiringId);
     if (!hiring) {
       return res.status(404).json({
         success: false,
         message: "Hiring detail not found",
       });
+    }
+
+    if (orgAdmin && hiring.orgAdmin?.toString() !== orgAdmin.toString()) {
+      return res.status(403).json({ success: false, message: "Access denied" });
     }
 
     return res.status(200).json({
@@ -156,6 +169,7 @@ export const getHiringById = async (req, res) => {
 
 export const updateHiring = async (req, res) => {
   const hiringId = req.params.id;
+  const orgContext = req.query.orgContext ?? null;
   const {
     name,
     email,
@@ -172,10 +186,16 @@ export const updateHiring = async (req, res) => {
     note,
   } = req.body;
 
-  console.log("name", name);
-  
-
   try {
+    const orgAdmin = resolveOrgAdminId(req.user, orgContext);
+    const existing = await Hiring.findById(hiringId).select("orgAdmin");
+    if (!existing) {
+      return res.status(404).json({ success: false, message: "Hiring data not found" });
+    }
+    if (orgAdmin && existing.orgAdmin?.toString() !== orgAdmin.toString()) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
+
     const hiring = await Hiring.findByIdAndUpdate(
       hiringId,
       {
@@ -195,12 +215,6 @@ export const updateHiring = async (req, res) => {
       },
       { new: true }
     );
-    if (!hiring) {
-      return res.status(404).json({
-        success: false,
-        message: "Hiring data not found",
-      });
-    }
 
     return res.status(200).json({
       success: true,
@@ -217,25 +231,118 @@ export const updateHiring = async (req, res) => {
 };
 
 export const deleteHiring = async (req, res) => {
-  const hiringId = req.params.id
+  const hiringId = req.params.id;
+  const orgContext = req.query.orgContext ?? null;
+
   try {
-    const hiring = await Hiring.findByIdAndDelete(hiringId)
-    if (!hiring) {
-      return res.status(404).json({
-        success: false,
-        message: "Hiring data not found"
-      })
+    const orgAdmin = resolveOrgAdminId(req.user, orgContext);
+    const existing = await Hiring.findById(hiringId).select("orgAdmin");
+    if (!existing) {
+      return res.status(404).json({ success: false, message: "Hiring data not found" });
+    }
+    if (orgAdmin && existing.orgAdmin?.toString() !== orgAdmin.toString()) {
+      return res.status(403).json({ success: false, message: "Access denied" });
     }
 
-    return res.status(200).json({
-      success: true,
-      message: "Hiring data deleted successfully"
-    })
+    await Hiring.findByIdAndDelete(hiringId);
+    return res.status(200).json({ success: true, message: "Hiring data deleted successfully" });
   } catch (error) {
     return res.status(500).json({
-          success: false,
-          message: "Failed hiring details",
-          error: error.message
-        })
+      success: false,
+      message: "Failed hiring details",
+      error: error.message,
+    });
+  }
+};
+
+export const updateStage = async (req, res) => {
+  const { id } = req.params;
+  const { stage } = req.body;
+  const orgContext = req.query.orgContext ?? null;
+  const validStages = ["applied", "screening", "interview_scheduled", "offer", "hired", "rejected"];
+
+  try {
+    if (!validStages.includes(stage)) {
+      return res.status(400).json({ success: false, message: "Invalid stage value" });
+    }
+
+    const orgAdmin = resolveOrgAdminId(req.user, orgContext);
+    const hiring = await Hiring.findById(id);
+    if (!hiring) {
+      return res.status(404).json({ success: false, message: "Applicant not found" });
+    }
+    if (orgAdmin && hiring.orgAdmin?.toString() !== orgAdmin.toString()) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
+
+    hiring.stage = stage;
+    if (stage === "hired") hiring.status = "hired";
+    if (stage === "rejected") hiring.status = "rejected";
+    await hiring.save();
+
+    if (stage === "offer") {
+      const html = hiringStatusTemplate({ name: hiring.name, status: "offer" });
+      await sendEmail(hiring.email, "Job Offer — Congratulations!", html).catch(() => {});
+    } else if (stage === "rejected") {
+      const html = hiringStatusTemplate({ name: hiring.name, status: "rejected" });
+      await sendEmail(hiring.email, "Your Application Status", html).catch(() => {});
+    }
+
+    return res.status(200).json({ success: true, hiring });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const convertToUser = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const hiring = await Hiring.findById(id);
+    if (!hiring) {
+      return res.status(404).json({ success: false, message: "Applicant not found" });
+    }
+    if (hiring.stage !== "hired") {
+      return res.status(400).json({
+        success: false,
+        message: "Applicant must be in 'hired' stage before converting to user",
+      });
+    }
+
+    const existing = await User.findOne({ email: hiring.email });
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        message: "A user with this email already exists",
+      });
+    }
+
+    const orgAdminId = resolveOrgAdminId(req.user);
+    const tempPassword = crypto.randomBytes(8).toString("hex");
+
+    const user = await User.create({
+      name: hiring.name,
+      email: hiring.email,
+      password: tempPassword,
+      role: ["employee"],
+      managedBy: orgAdminId ?? null,
+      phone: hiring.phone || null,
+      isEmailVerified: true,
+    });
+
+    const html = hiringStatusTemplate({
+      name: hiring.name,
+      status: "hired",
+      email: hiring.email,
+      tempPassword,
+    });
+    await sendEmail(hiring.email, "Welcome to the team!", html).catch(() => {});
+
+    return res.status(201).json({
+      success: true,
+      message: "User account created successfully",
+      user: { _id: user._id, name: user.name, email: user.email, role: user.role },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

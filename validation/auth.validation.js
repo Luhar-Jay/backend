@@ -138,12 +138,6 @@ export const LoginBodySchema = z
   })
   .openapi('LoginBody');
 
-export const RefreshTokenBodySchema = z
-  .object({
-    refreshToken: z.string().min(1, 'Refresh token is required').openapi({ example: 'refresh123' }),
-  })
-  .openapi('RefreshTokenBody');
-
 export const UpdateUserBodySchema = z
   .object({
     name: z.string().optional(),
@@ -193,11 +187,23 @@ registry.registerPath({
   method: 'post',
   path: '/auth/login',
   tags: ['Auth'],
-  summary: 'Login and receive a JWT',
+  summary: 'Login (sets HttpOnly session cookies)',
   request: { body: { content: { 'application/json': { schema: LoginBodySchema } } } },
   responses: {
-    200: { description: 'Login successful — returns token' },
+    200: { description: 'Login successful — sets HttpOnly access and refresh cookies' },
     400: { description: 'Invalid credentials' },
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/auth/me',
+  tags: ['Auth'],
+  summary: 'Current user (from access cookie)',
+  security: bearerAuth,
+  responses: {
+    200: { description: 'Current user document' },
+    401: { description: 'Not authenticated' },
   },
 });
 
@@ -279,7 +285,6 @@ registry.registerPath({
   method: 'post',
   path: '/auth/refresh-token',
   tags: ['Auth'],
-  summary: 'Refresh token',
-  request: { body: { content: { 'application/json': { schema: RefreshTokenBodySchema } } } },
-  responses: { 200: { description: 'Token refreshed successfully' } },
+  summary: 'Refresh access token (uses HttpOnly refresh cookie)',
+  responses: { 200: { description: 'New access token set in cookie' } },
 });

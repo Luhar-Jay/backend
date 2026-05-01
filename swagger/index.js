@@ -19,7 +19,7 @@ export function generateOpenAPIDocument() {
       title: 'TMS — Task Management System API',
       version: '1.0.0',
       description:
-        'Complete REST API documentation for the TMS backend. All protected routes require a Bearer JWT token.',
+        'TMS API v1. Protected routes expect an access JWT in the HttpOnly `accessToken` cookie (credentials: include from the SPA).',
     },
     servers: [{ url: '/api/v1', description: 'TMS API v1' }],
   });

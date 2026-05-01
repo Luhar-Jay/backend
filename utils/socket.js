@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import ChatMessage from "../model/chat.model.js";
 import { pubClient, subClient } from "./redis.js";
 import { createAdapter } from "@socket.io/redis-adapter";
+import { COOKIE_ACCESS, parseCookieHeader } from "./authCookies.js";
 
 const redisAvailable = pubClient !== null && subClient !== null;
 
@@ -33,12 +34,15 @@ async function removeOnlineUser(userId) {
 }
 
 export function initSocket(httpServer) {
-  const io = new Server(httpServer, {
-    cors: {
-      origin: process.env.FRONTEND_URL,
-      credentials: true,
-    },
-  });
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const cors = {
+    origin: allowedOrigins,
+    credentials: true,
+  };
+  const io = new Server(httpServer, { cors });
 
   if (redisAvailable) {
     io.adapter(createAdapter(pubClient, subClient));
@@ -48,7 +52,9 @@ export function initSocket(httpServer) {
   }
 
   io.use((socket, next) => {
-    const token = socket.handshake.auth?.token;
+    const raw = socket.handshake.headers.cookie;
+    const cookies = parseCookieHeader(raw);
+    const token = cookies[COOKIE_ACCESS];
     if (!token) return next(new Error("Authentication required"));
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -122,14 +128,65 @@ export function initSocket(httpServer) {
       io.to(senderId).emit("message:read", { readBy: userId });
     });
 
-    socket.on("message:delete", ({ messageId, receiverId }) => {
+    socket.on("message:delete", async({ messageId, receiverId }, callback) => {
       // Relay the deletion to the other participant so their UI updates live
-      io.to(receiverId).emit("message:delete", { messageId });
+      try {
+        const message = await ChatMessage.findById(messageId)
+
+        if (!message) {
+          return callback?. ({ success: false, error: "Message not found" });
+        }
+
+        if (message.sender.toString() !== socket.userId){
+          return callback?. ({ success: false, error: "Not authorized to delete this message" });
+        }
+
+        //Delete form DB
+        await ChatMessage.findByIdAndDelete(messageId);
+
+        // Emit both users
+        io.to(receiverId).emit("message:delete", { messageId });
+        io.to(socket.userId).emit("message:delete", { messageId });
+        callback?. ({ success: true });
+      } catch (error) {
+        console.error("Message delete error:", error);
+        callback?. ({ success: false, error: "Server error" });
+      }
     });
 
-    socket.on("message:edit", ({ messageId, message, receiverId }) => {
-      // Relay the edit to the other participant so their UI updates live
-      io.to(receiverId).emit("message:edit", { messageId, message });
+    socket.on("message:edit", async({ messageId, message, receiverId }, callback) => {
+      try {
+        if (!message || !message.trim()) {
+          return callback?. ({ success: false, error: "Invalid message" });
+        }
+
+        const chatMessage = await ChatMessage.findById(messageId)
+
+        if (!chatMessage) {
+          return callback?. ({ success: false, error: "Message not found" });
+        }
+
+        if (chatMessage.sender.toString() !== socket.userId){
+          return callback?. ({ success: false, error: "Not authorized to edit this message" });
+        }
+
+        chatMessage.message = message.trim();
+        await chatMessage.save()
+
+        io.to(receiverId).emit("message:edit", {
+          messageId,
+          message: chatMessage.message,
+        });
+        io.to(socket.userId).emit("message:edit", {
+          messageId,
+          message: chatMessage.message,
+        });
+    
+        callback?.({ success: true });
+      } catch (err) {
+        console.error("Edit error:", err);
+        callback?.({ success: false, error: "Server error" });
+      }
     });
 
     socket.on("disconnect", async () => {

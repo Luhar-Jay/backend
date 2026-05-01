@@ -44,7 +44,12 @@ const leaveSchema = new mongoose.Schema({
   deductedFromPaid: { type: Number, default: 0 },
   /** Days reserved from annual totalBalance at apply time */
   deductedFromAnnual: { type: Number, default: 0 },
+  /** Calendar days minus holidays — authoritative day count for balance ops */
+  workingDays: { type: Number, default: null },
 }, { timestamps: true });
+
+// Prevents duplicate leave records from concurrent submissions (BUG-011)
+leaveSchema.index({ user: 1, fromDate: 1, toDate: 1 }, { unique: true });
 
 const Leave = mongoose.model("Leave", leaveSchema);
 export default Leave;

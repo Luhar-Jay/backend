@@ -8,6 +8,11 @@ import {
 import crypto from "crypto";
 import { sendEmail } from "../utils/mailService/sendMail.js";
 import { verifyEmailTemplate } from "../utils/mailService/verifyEmailTemplate.js";
+import {
+  setAuthCookies,
+  setAccessCookie,
+  clearAuthCookies,
+} from "../utils/authCookies.js";
 
 const buildLoginRedirectUrl = () => {
   if (process.env.FRONTEND_LOGIN_URL) return process.env.FRONTEND_LOGIN_URL;
@@ -43,6 +48,19 @@ function signJwtForUser(user) {
     { id: user._id, role: user.role },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN }
+  );
+}
+
+function refreshJwtSecret() {
+  return process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+}
+
+/** Long-lived refresh token (separate secret optional). Payload must include typ so access JWTs cannot be used here. */
+function signRefreshTokenForUser(user) {
+  return jwt.sign(
+    { id: user._id, typ: "refresh" },
+    refreshJwtSecret(),
+    { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "30d" }
   );
 }
 
@@ -265,44 +283,60 @@ export const createUserByAdmin = async (req, res) => {
 
 export const loginUser = async (req, res) => {
   const { email, password } = req.body;
+
   if (!email || !password) {
     return res.status(400).json({
       success: false,
       message: "All fields are required",
     });
   }
+
   try {
     const user = await User.findOne({ email });
+
     if (!user) {
       return res.status(400).json({
         success: false,
         message: "User not found",
       });
     }
+
     if (!user.isEmailVerified) {
       return res.status(403).json({
         success: false,
         message: "Please verify your email before logging in",
       });
     }
+
     if (user.isActive === false) {
       return res.status(403).json({
         success: false,
         code: "ACCOUNT_INACTIVE",
         message:
-          "Your account has been deactivated. Please contact an administrator to restore access.",
+          "Your account has been deactivated. Please contact an administrator.",
       });
     }
+
     const isPasswordCorrect = await user.comparePassword(password);
+
     if (!isPasswordCorrect) {
       return res.status(400).json({
         success: false,
         message: "Invalid password",
       });
     }
-    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRES_IN,
-    });
+
+    // 🔐 Generate tokens
+    const accessToken = jwt.sign(
+      { id: user._id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN }
+    );
+
+    const refreshToken = signRefreshTokenForUser(user);
+
+    setAuthCookies(res, accessToken, refreshToken);
+
     const userResponse = user.toObject();
     delete userResponse.password;
 
@@ -310,8 +344,8 @@ export const loginUser = async (req, res) => {
       success: true,
       message: "Login successful",
       user: userResponse,
-      token,
     });
+
   } catch (error) {
     return res.status(500).json({
       success: false,
@@ -348,6 +382,28 @@ export const verifyUserEmail = async (req, res) => {
   } catch (error) {
     console.error("Error verifying email:", error);
     return res.redirect(`${buildLoginRedirectUrl()}?verified=false&reason=server_error`);
+  }
+};
+
+export const getSessionUser = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select("-password");
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      user,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error loading session",
+      error: error.message,
+    });
   }
 };
 
@@ -690,8 +746,7 @@ export const deleteUser = async (req, res) => {
 
 export const logoutUser = async (req, res) => {
   try {
-    // Optionally, if you’re using cookies:
-    res.clearCookie("token", { httpOnly: true, secure: true, sameSite: "strict" });
+    clearAuthCookies(res);
 
     return res.status(200).json({
       success: true,
@@ -707,7 +762,7 @@ export const logoutUser = async (req, res) => {
 };
 
 export const refreshToken = async (req, res) => {
-  const { refreshToken } = req.body;
+  const refreshToken = req.cookies?.refreshToken;
   try {
     if (!refreshToken) {
       return res.status(400).json({
@@ -715,18 +770,34 @@ export const refreshToken = async (req, res) => {
         message: "Refresh token is required",
       });
     }
-    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
-    if (!decoded) {
-      return res.status(400).json({
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, refreshJwtSecret());
+    } catch (e) {
+      const name = e && typeof e === "object" ? e.name : "";
+      const message =
+        name === "TokenExpiredError"
+          ? "Refresh token expired. Please sign in again."
+          : "Invalid refresh token. Please sign in again.";
+      return res.status(401).json({
         success: false,
-        message: "Invalid refresh token",
+        code: "REFRESH_INVALID",
+        message,
+      });
+    }
+    if (!decoded || decoded.typ !== "refresh" || !decoded.id) {
+      return res.status(401).json({
+        success: false,
+        code: "REFRESH_INVALID",
+        message: "Invalid refresh token. Please sign in again.",
       });
     }
     const user = await User.findById(decoded.id).select("-password");
     if (!user) {
-      return res.status(400).json({
+      return res.status(401).json({
         success: false,
-        message: "User not found",
+        code: "REFRESH_INVALID",
+        message: "User not found. Please sign in again.",
       });
     }
     if (user.isActive === false) {
@@ -740,10 +811,10 @@ export const refreshToken = async (req, res) => {
     const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
       expiresIn: process.env.JWT_EXPIRES_IN,
     });
+    setAccessCookie(res, token);
     return res.status(200).json({
       success: true,
       message: "Token refreshed successfully",
-      token,
     });
   } catch (error) {
     return res.status(500).json({
@@ -876,8 +947,10 @@ export const googleAuthCallback = async (req, res) => {
       }
     }
 
-    const token = signJwtForUser(user);
-    return res.redirect(`${frontendLogin}?token=${encodeURIComponent(token)}&provider=google`);
+    const accessToken = signJwtForUser(user);
+    const refreshJwt = signRefreshTokenForUser(user);
+    setAuthCookies(res, accessToken, refreshJwt);
+    return res.redirect(`${frontendLogin}?provider=google`);
   } catch (err) {
     const message =
       err && typeof err === "object" && "message" in err

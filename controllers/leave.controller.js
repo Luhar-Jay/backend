@@ -1,6 +1,11 @@
 import Leave from "../model/leave.model.js";
 import User from "../model/user.model.js";
 import { getOrgCreatorUserIds, resolveOrgAdminId } from "../utils/teamScope.js";
+import {
+  getOrgHolidayDatesInRange,
+  countWorkingDays,
+  isHolidayDate,
+} from "./holiday.controller.js";
 import { leaveRequestTemplate } from "../utils/mailService/leaveRequestTemplate.js";
 import { leaveStatusTemplate } from "../utils/mailService/leaveStatusTemplat.js";
 import { sendEmail } from "../utils/mailService/sendMail.js";
@@ -27,8 +32,8 @@ function refundReservedBalances(user, leave, totalDays) {
   if (fromPaid === 0 && fromAnnual === 0 && leave.type === "paidLeave") {
     fromPaid = totalDays;
   }
-  b.paidLeave = Number(b.paidLeave) + fromPaid;
-  b.totalBalance = Number(b.totalBalance) + fromAnnual;
+  b.paidLeave = Math.round((Number(b.paidLeave) + fromPaid) * 2) / 2;
+  b.totalBalance = Math.round((Number(b.totalBalance) + fromAnnual) * 2) / 2;
   user.markModified("leaves");
 }
 
@@ -42,7 +47,8 @@ async function persistLeaveStatusChange(leave, status, adminComment) {
     throw new Error("Employee record not found for this leave");
   }
 
-  const totalDays = computeLeaveDayCount(leave);
+  // workingDays is stored at apply time (holiday-adjusted); fall back to raw count for legacy rows
+  const totalDays = leave.workingDays ?? computeLeaveDayCount(leave);
   const prevStatus = leave.status;
 
   if (!user.leaves || user.leaves.length === 0) {
@@ -51,7 +57,7 @@ async function persistLeaveStatusChange(leave, status, adminComment) {
   const leaveBalance = user.leaves[0];
 
   if (status === "approved" && prevStatus === "pending") {
-    leaveBalance.leaveTaken = Number(leaveBalance.leaveTaken) + totalDays;
+    leaveBalance.leaveTaken = Math.round((Number(leaveBalance.leaveTaken) + totalDays) * 2) / 2;
     user.markModified("leaves");
     await user.save();
   }
@@ -63,7 +69,7 @@ async function persistLeaveStatusChange(leave, status, adminComment) {
     } else if (prevStatus === "approved") {
       leaveBalance.leaveTaken = Math.max(
         0,
-        Number(leaveBalance.leaveTaken) - totalDays
+        Math.round((Number(leaveBalance.leaveTaken) - totalDays) * 2) / 2
       );
       refundReservedBalances(user, leave, totalDays);
       user.markModified("leaves");
@@ -155,26 +161,49 @@ export const applyLeave = async (req, res) => {
     let deductedFromPaid = 0;
     let deductedFromAnnual = 0;
 
-    let totalDays = 1; // default single day
-    if (days === "multiple") {
-      const diff = new Date(toDate) - new Date(fromDate);
-      totalDays = Math.ceil(diff / (1000 * 60 * 60 * 24)) + 1;
-    }
+    const orgAdminId = resolveOrgAdminId(user);
 
-    // ✅ If half day
+    // Holiday-aware day count
+    let totalDays;
     if (subType === "halfDay") {
+      const holidayName = await isHolidayDate(orgAdminId, fromDate);
+      if (holidayName) {
+        return res.status(400).json({
+          success: false,
+          message: `${holidayName} is a company holiday. No leave required.`,
+        });
+      }
       totalDays = 0.5;
+    } else if (days === "single") {
+      const holidayName = await isHolidayDate(orgAdminId, fromDate);
+      if (holidayName) {
+        return res.status(400).json({
+          success: false,
+          message: `${holidayName} is a company holiday. No leave required.`,
+        });
+      }
+      totalDays = 1;
+    } else {
+      // multiple days — subtract holidays
+      const holidaySet = await getOrgHolidayDatesInRange(orgAdminId, fromDate, toDate);
+      totalDays = countWorkingDays(fromDate, toDate, holidaySet);
+      if (totalDays === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "All selected dates are company holidays. No leave required.",
+        });
+      }
     }
 
     // ✅ Only the very first leave in this month gets "paidLeave"
     if (existingLeaves.length === 0 && leaveBalance.paidLeave > 0) {
       leaveType = "paidLeave";
-      leaveBalance.paidLeave -= totalDays;
+      leaveBalance.paidLeave = Math.round((Number(leaveBalance.paidLeave) - totalDays) * 2) / 2;
       deductedFromPaid = totalDays;
     } else {
       // If already taken or requested paid leave this month
       if (leaveBalance.totalBalance >= totalDays) {
-        leaveBalance.totalBalance -= totalDays;
+        leaveBalance.totalBalance = Math.round((Number(leaveBalance.totalBalance) - totalDays) * 2) / 2;
         deductedFromAnnual = totalDays;
       } else {
         leaveType = "unpaidLeave";
@@ -192,6 +221,7 @@ export const applyLeave = async (req, res) => {
       reason,
       deductedFromPaid,
       deductedFromAnnual,
+      workingDays: totalDays,
     });
 
     user.markModified("leaves");
@@ -226,6 +256,12 @@ export const applyLeave = async (req, res) => {
       updatedBalance: leaveBalance,
     });
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "A leave request for these dates already exists.",
+      });
+    }
     return res.status(500).json({
       success: false,
       message: "Error applying leave",
