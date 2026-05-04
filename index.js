@@ -32,12 +32,23 @@ import cookieParser from "cookie-parser";
 const app = express();
 // Avoid 304 Not Modified for API JSON responses (frontend expects a body).
 app.set("etag", false);
-app.use(cors(
-    {
-        origin: [process.env.FRONTEND_URL, "https://frontend-zeta-eight-57.vercel.app"],
-        credentials: true,
+const allowedOrigins = [
+  ...(process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+  "https://frontend-zeta-eight-57.vercel.app",
+];
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS: origin not allowed — ${origin}`));
     }
-));
+  },
+  credentials: true,
+}));
 app.use(express.json());
 app.use(cookieParser());
 // Force APIs to be non-cacheable (prevents browser conditional requests / 304s).
