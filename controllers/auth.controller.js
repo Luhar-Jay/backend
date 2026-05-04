@@ -157,37 +157,29 @@ export const registerUser = async (req, res) => {
 
     const verifyLink = `${process.env.BACKEND_URL || `${req.protocol}://${req.get("host")}`}/api/v1/auth/verify-email?token=${emailVerificationToken}`;
 
-    let emailError = null;
-    try {
-      await sendEmail(
-        newUser.email,
-        "Verify your email address",
-        verifyEmailTemplate({
-          name: newUser.name,
-          verifyUrl: verifyLink,
-          expiryMinutes: 10,
-          appName: "Task Management System",
-          supportEmail: process.env.SUPPORT_EMAIL || "",
-        })
-      );
-    } catch (mailError) {
-      console.error("❌ Error sending verification email:", mailError?.message ?? mailError);
-      emailError = mailError?.message ?? "Unknown mail error";
-    }
-
-    // Step 4: Prepare response (exclude password)
+    // Step 4: Respond immediately — email sends in background (no SMTP wait)
     const userResponse = newUser.toObject();
     delete userResponse.password;
 
-    // Step 5: Send response
-    return res.status(201).json({
+    res.status(201).json({
       success: true,
-      message: emailError
-        ? "User registered but verification email could not be sent. Contact support."
-        : "User registered successfully. Please verify your email before login.",
-      emailSent: !emailError,
-      ...(emailError && process.env.NODE_ENV !== "production" && { emailError }),
+      message: "User registered successfully. Please verify your email before login.",
       user: userResponse,
+    });
+
+    // Fire-and-forget after response is sent
+    sendEmail(
+      newUser.email,
+      "Verify your email address",
+      verifyEmailTemplate({
+        name: newUser.name,
+        verifyUrl: verifyLink,
+        expiryMinutes: 10,
+        appName: "Task Management System",
+        supportEmail: process.env.SUPPORT_EMAIL || "",
+      })
+    ).catch((mailError) => {
+      console.error("❌ Verification email failed for", newUser.email, "—", mailError?.message ?? mailError);
     });
   } catch (error) {
     console.error("Error registering user:", error);
