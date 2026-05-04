@@ -2,7 +2,6 @@ import crypto from "crypto";
 import User from "../model/user.model.js";
 import Hiring from "../model/hiring.js";
 import cloudinary from "../utils/cloudinary.js";
-import fs from "fs";
 import { resolveOrgAdminId } from "../utils/teamScope.js";
 import { sendEmail } from "../utils/mailService/sendMail.js";
 import { hiringStatusTemplate } from "../utils/mailService/hiringStatusTemplate.js";
@@ -27,8 +26,8 @@ export const createHiring = async (req, res) => {
 
     const existingHiring = await Hiring.findOne({ email });
     if (existingHiring) {
-      if (req.file) {
-        fs.unlinkSync(req.file.path);
+      if (req.file?.filename) {
+        cloudinary.uploader.destroy(req.file.filename).catch(() => {});
       }
       return res.status(400).json({
         success: false,

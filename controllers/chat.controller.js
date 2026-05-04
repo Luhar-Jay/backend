@@ -74,6 +74,7 @@ export const editMessage = async (req, res) => {
     )
       .populate("sender", "name profileImage")
       .populate("receiver", "name profileImage")
+      .populate({ path: "mentions", select: "name profileImage" })
       .populate(reactionPopulate);
 
     return res.status(200).json({ success: true, data: updated });
@@ -135,7 +136,7 @@ export const toggleReaction = async (req, res) => {
       return res.status(status).json({ success: false, message: result.error });
     }
 
-    notifyChatMessageReactionsUpdated(result.senderId, result.receiverId, {
+    notifyChatMessageReactionsUpdated(result.senderId, result.receiverId, result.groupId, {
       messageId,
       reactions: result.reactions,
     });
@@ -167,6 +168,7 @@ export const getMessages = async (req, res) => {
       .limit(limit)
       .populate("sender", "name profileImage")
       .populate("receiver", "name profileImage")
+      .populate({ path: "mentions", select: "name profileImage" })
       .populate({
         path: "replyTo",
         select: "_id message attachments sender",

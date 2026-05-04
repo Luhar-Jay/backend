@@ -10,8 +10,19 @@ const chatMessageSchema = new mongoose.Schema(
     receiver: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      default: null,
     },
+    group: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ChatGroup",
+      default: null,
+    },
+    mentions: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
     message: {
       type: String,
       default: "",
@@ -63,6 +74,7 @@ const chatMessageSchema = new mongoose.Schema(
 );
 
 chatMessageSchema.index({ sender: 1, receiver: 1, createdAt: -1 });
+chatMessageSchema.index({ group: 1, createdAt: -1 });
 
 const ChatMessage = mongoose.model("ChatMessage", chatMessageSchema);
 

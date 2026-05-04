@@ -33,14 +33,21 @@ export async function toggleMessageReaction({ messageId, userId, emoji: rawEmoji
     return { ok: false, error: "Invalid message id" };
   }
 
-  const message = await ChatMessage.findById(messageId).select("sender receiver reactions");
+  const message = await ChatMessage.findById(messageId).select("sender receiver group reactions");
   if (!message) {
     return { ok: false, error: "Message not found" };
   }
 
   const uid = userId.toString();
-  const isParticipant =
-    message.sender.toString() === uid || message.receiver.toString() === uid;
+  let isParticipant = message.sender.toString() === uid;
+  if (!isParticipant && message.group) {
+    // Group message — check membership
+    const { default: ChatGroup } = await import("../model/chatGroup.model.js");
+    const grp = await ChatGroup.findById(message.group).select("members");
+    isParticipant = grp?.members.some((m) => m.toString() === uid) ?? false;
+  } else if (!isParticipant && message.receiver) {
+    isParticipant = message.receiver.toString() === uid;
+  }
   if (!isParticipant) {
     return { ok: false, error: "Not authorized" };
   }
@@ -63,7 +70,8 @@ export async function toggleMessageReaction({ messageId, userId, emoji: rawEmoji
     ok: true,
     reactions: updated.reactions ?? [],
     senderId: message.sender.toString(),
-    receiverId: message.receiver.toString(),
+    receiverId: message.receiver ? message.receiver.toString() : null,
+    groupId: message.group ? message.group.toString() : null,
   };
 }
 

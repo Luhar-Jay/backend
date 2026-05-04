@@ -1,6 +1,7 @@
 import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
 import ChatMessage from "../model/chat.model.js";
+import ChatGroup from "../model/chatGroup.model.js";
 import { reactionPopulate } from "./chatReaction.js";
 import { pubClient, subClient } from "./redis.js";
 import { createAdapter } from "@socket.io/redis-adapter";
@@ -11,10 +12,14 @@ const redisAvailable = pubClient !== null && subClient !== null;
 /** Set in initSocket — used to broadcast chat reaction updates */
 let ioSingleton = null;
 
-export function notifyChatMessageReactionsUpdated(senderId, receiverId, payload) {
+export function notifyChatMessageReactionsUpdated(senderId, receiverId, groupId, payload) {
   if (!ioSingleton) return;
-  ioSingleton.to(String(senderId)).emit("message:reactions-updated", payload);
-  ioSingleton.to(String(receiverId)).emit("message:reactions-updated", payload);
+  if (groupId) {
+    ioSingleton.to(`group:${groupId}`).emit("message:reactions-updated", payload);
+  } else {
+    ioSingleton.to(String(senderId)).emit("message:reactions-updated", payload);
+    if (receiverId) ioSingleton.to(String(receiverId)).emit("message:reactions-updated", payload);
+  }
 }
 
 // Fallback in-memory set when Redis is not available
@@ -84,7 +89,19 @@ export function initSocket(httpServer) {
     io.emit("user:online", { userId });
     socket.join(userId);
 
-    socket.on("message:send", async ({ receiverId, message, attachments, replyToId }, callback) => {
+    // Join all group rooms the user belongs to
+    try {
+      const groups = await ChatGroup.find({ members: userId }).select("_id");
+      for (const g of groups) {
+        socket.join(`group:${g._id}`);
+      }
+    } catch (err) {
+      console.error("Failed to join group rooms:", err);
+    }
+
+    // ── DM events ──────────────────────────────────────────────────────────
+
+    socket.on("message:send", async ({ receiverId, message, attachments, replyToId, mentions }, callback) => {
       try {
         const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
         if (!receiverId || (!message?.trim() && !hasAttachments)) {
@@ -102,11 +119,13 @@ export function initSocket(httpServer) {
           message,
           attachments: hasAttachments ? attachments : [],
           replyTo: replyToId ?? null,
+          mentions: Array.isArray(mentions) ? mentions : [],
         });
 
         const populated = await chatMessage.populate([
           { path: "sender", select: "name profileImage" },
           { path: "receiver", select: "name profileImage" },
+          { path: "mentions", select: "name profileImage" },
           reactionPopulate,
           {
             path: "replyTo",
@@ -140,65 +159,138 @@ export function initSocket(httpServer) {
       io.to(senderId).emit("message:read", { readBy: userId });
     });
 
-    socket.on("message:delete", async({ messageId, receiverId }, callback) => {
-      // Relay the deletion to the other participant so their UI updates live
+    socket.on("message:delete", async ({ messageId, receiverId }, callback) => {
       try {
-        const message = await ChatMessage.findById(messageId)
-
-        if (!message) {
-          return callback?. ({ success: false, error: "Message not found" });
+        const message = await ChatMessage.findById(messageId);
+        if (!message) return callback?.({ success: false, error: "Message not found" });
+        if (message.sender.toString() !== socket.userId) {
+          return callback?.({ success: false, error: "Not authorized to delete this message" });
         }
-
-        if (message.sender.toString() !== socket.userId){
-          return callback?. ({ success: false, error: "Not authorized to delete this message" });
-        }
-
-        //Delete form DB
         await ChatMessage.findByIdAndDelete(messageId);
-
-        // Emit both users
         io.to(receiverId).emit("message:delete", { messageId });
         io.to(socket.userId).emit("message:delete", { messageId });
-        callback?. ({ success: true });
+        callback?.({ success: true });
       } catch (error) {
         console.error("Message delete error:", error);
-        callback?. ({ success: false, error: "Server error" });
+        callback?.({ success: false, error: "Server error" });
       }
     });
 
-    socket.on("message:edit", async({ messageId, message, receiverId }, callback) => {
+    socket.on("message:edit", async ({ messageId, message, receiverId }, callback) => {
       try {
-        if (!message || !message.trim()) {
-          return callback?. ({ success: false, error: "Invalid message" });
+        if (!message?.trim()) return callback?.({ success: false, error: "Invalid message" });
+        const chatMessage = await ChatMessage.findById(messageId);
+        if (!chatMessage) return callback?.({ success: false, error: "Message not found" });
+        if (chatMessage.sender.toString() !== socket.userId) {
+          return callback?.({ success: false, error: "Not authorized to edit this message" });
         }
-
-        const chatMessage = await ChatMessage.findById(messageId)
-
-        if (!chatMessage) {
-          return callback?. ({ success: false, error: "Message not found" });
-        }
-
-        if (chatMessage.sender.toString() !== socket.userId){
-          return callback?. ({ success: false, error: "Not authorized to edit this message" });
-        }
-
         chatMessage.message = message.trim();
-        await chatMessage.save()
-
-        io.to(receiverId).emit("message:edit", {
-          messageId,
-          message: chatMessage.message,
-        });
-        io.to(socket.userId).emit("message:edit", {
-          messageId,
-          message: chatMessage.message,
-        });
-    
+        chatMessage.isEdited = true;
+        await chatMessage.save();
+        io.to(receiverId).emit("message:edit", { messageId, message: chatMessage.message });
+        io.to(socket.userId).emit("message:edit", { messageId, message: chatMessage.message });
         callback?.({ success: true });
       } catch (err) {
         console.error("Edit error:", err);
         callback?.({ success: false, error: "Server error" });
       }
+    });
+
+    // ── Group events ───────────────────────────────────────────────────────
+
+    socket.on("group:message:send", async ({ groupId, message, attachments, replyToId, mentions }, callback) => {
+      try {
+        const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+        if (!groupId || (!message?.trim() && !hasAttachments)) {
+          return callback?.({ success: false, error: "Invalid data" });
+        }
+
+        const group = await ChatGroup.findById(groupId).select("members");
+        if (!group) return callback?.({ success: false, error: "Group not found" });
+        if (!group.members.some((m) => m.toString() === userId)) {
+          return callback?.({ success: false, error: "Not a member of this group" });
+        }
+
+        message = message?.trim() ?? "";
+
+        const chatMessage = await ChatMessage.create({
+          sender: userId,
+          group: groupId,
+          message,
+          attachments: hasAttachments ? attachments : [],
+          replyTo: replyToId ?? null,
+          mentions: Array.isArray(mentions) ? mentions : [],
+        });
+
+        const populated = await chatMessage.populate([
+          { path: "sender", select: "name profileImage" },
+          { path: "mentions", select: "name profileImage" },
+          reactionPopulate,
+          {
+            path: "replyTo",
+            select: "_id message attachments sender",
+            populate: { path: "sender", select: "name" },
+          },
+        ]);
+
+        io.to(`group:${groupId}`).emit("group:message:receive", { groupId, message: populated });
+        callback?.({ success: true, data: populated });
+      } catch (err) {
+        console.error("Group message error:", err);
+        callback?.({ success: false, error: "Server error" });
+      }
+    });
+
+    socket.on("group:typing:start", ({ groupId }) => {
+      socket.to(`group:${groupId}`).emit("group:typing:start", { userId, groupId });
+    });
+
+    socket.on("group:typing:stop", ({ groupId }) => {
+      socket.to(`group:${groupId}`).emit("group:typing:stop", { userId, groupId });
+    });
+
+    socket.on("group:message:delete", async ({ messageId, groupId }, callback) => {
+      try {
+        const message = await ChatMessage.findById(messageId);
+        if (!message) return callback?.({ success: false, error: "Message not found" });
+        if (message.sender.toString() !== socket.userId) {
+          return callback?.({ success: false, error: "Not authorized" });
+        }
+        await ChatMessage.findByIdAndDelete(messageId);
+        io.to(`group:${groupId}`).emit("group:message:delete", { messageId, groupId });
+        callback?.({ success: true });
+      } catch (err) {
+        console.error("Group delete error:", err);
+        callback?.({ success: false, error: "Server error" });
+      }
+    });
+
+    socket.on("group:message:edit", async ({ messageId, message, groupId }, callback) => {
+      try {
+        if (!message?.trim()) return callback?.({ success: false, error: "Invalid message" });
+        const chatMessage = await ChatMessage.findById(messageId);
+        if (!chatMessage) return callback?.({ success: false, error: "Message not found" });
+        if (chatMessage.sender.toString() !== socket.userId) {
+          return callback?.({ success: false, error: "Not authorized" });
+        }
+        chatMessage.message = message.trim();
+        chatMessage.isEdited = true;
+        await chatMessage.save();
+        io.to(`group:${groupId}`).emit("group:message:edit", {
+          messageId,
+          message: chatMessage.message,
+          groupId,
+        });
+        callback?.({ success: true });
+      } catch (err) {
+        console.error("Group edit error:", err);
+        callback?.({ success: false, error: "Server error" });
+      }
+    });
+
+    // Join a newly created group room
+    socket.on("group:join", ({ groupId }) => {
+      socket.join(`group:${groupId}`);
     });
 
     socket.on("disconnect", async () => {
