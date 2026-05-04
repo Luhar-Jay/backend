@@ -1,11 +1,21 @@
 import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
 import ChatMessage from "../model/chat.model.js";
+import { reactionPopulate } from "./chatReaction.js";
 import { pubClient, subClient } from "./redis.js";
 import { createAdapter } from "@socket.io/redis-adapter";
 import { COOKIE_ACCESS, parseCookieHeader } from "./authCookies.js";
 
 const redisAvailable = pubClient !== null && subClient !== null;
+
+/** Set in initSocket — used to broadcast chat reaction updates */
+let ioSingleton = null;
+
+export function notifyChatMessageReactionsUpdated(senderId, receiverId, payload) {
+  if (!ioSingleton) return;
+  ioSingleton.to(String(senderId)).emit("message:reactions-updated", payload);
+  ioSingleton.to(String(receiverId)).emit("message:reactions-updated", payload);
+}
 
 // Fallback in-memory set when Redis is not available
 const localOnlineUsers = new Set();
@@ -43,6 +53,7 @@ export function initSocket(httpServer) {
     credentials: true,
   };
   const io = new Server(httpServer, { cors });
+  ioSingleton = io;
 
   if (redisAvailable) {
     io.adapter(createAdapter(pubClient, subClient));
@@ -96,6 +107,7 @@ export function initSocket(httpServer) {
         const populated = await chatMessage.populate([
           { path: "sender", select: "name profileImage" },
           { path: "receiver", select: "name profileImage" },
+          reactionPopulate,
           {
             path: "replyTo",
             select: "_id message attachments sender",

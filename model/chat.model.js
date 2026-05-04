@@ -44,6 +44,20 @@ const chatMessageSchema = new mongoose.Schema(
       ref: "ChatMessage",
       default: null,
     },
+    reactions: [
+      {
+        emoji: {
+          type: String,
+          required: true,
+          maxlength: 64,
+        },
+        user: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+      },
+    ],
   },
   { timestamps: true },
 );

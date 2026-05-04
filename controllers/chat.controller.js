@@ -1,6 +1,7 @@
 import ChatMessage from "../model/chat.model.js";
 import User from "../model/user.model.js";
-import { getOnlineUsers } from "../utils/socket.js";
+import { getOnlineUsers, notifyChatMessageReactionsUpdated } from "../utils/socket.js";
+import { toggleMessageReaction, reactionPopulate } from "../utils/chatReaction.js";
 import { getOrgCreatorUserIds, resolveOrgAdminId } from "../utils/teamScope.js";
 
 // POST /api/v1/chat/upload — upload a file/image for chat (returns url + metadata)
@@ -72,7 +73,8 @@ export const editMessage = async (req, res) => {
       { new: true }
     )
       .populate("sender", "name profileImage")
-      .populate("receiver", "name profileImage");
+      .populate("receiver", "name profileImage")
+      .populate(reactionPopulate);
 
     return res.status(200).json({ success: true, data: updated });
   } catch (error) {
@@ -112,6 +114,38 @@ export const deleteMessage = async (req, res) => {
   }
 };
 
+// POST /api/v1/chat/message/:messageId/reaction — one emoji per user: toggle off same emoji; replace other emoji
+export const toggleReaction = async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { emoji } = req.body ?? {};
+    const result = await toggleMessageReaction({
+      messageId,
+      userId: req.user._id,
+      emoji,
+    });
+
+    if (!result.ok) {
+      const status =
+        result.error === "Message not found"
+          ? 404
+          : result.error === "Not authorized"
+            ? 403
+            : 400;
+      return res.status(status).json({ success: false, message: result.error });
+    }
+
+    notifyChatMessageReactionsUpdated(result.senderId, result.receiverId, {
+      messageId,
+      reactions: result.reactions,
+    });
+
+    return res.status(200).json({ success: true, data: { reactions: result.reactions } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // GET /api/v1/chat/:receiverId — paginated message history between two users
 export const getMessages = async (req, res) => {
   try {
@@ -137,7 +171,8 @@ export const getMessages = async (req, res) => {
         path: "replyTo",
         select: "_id message attachments sender",
         populate: { path: "sender", select: "name" },
-      });
+      })
+      .populate(reactionPopulate);
 
     const total = await ChatMessage.countDocuments({
       $or: [
