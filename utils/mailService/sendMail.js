@@ -7,10 +7,11 @@ function createTransport() {
   const host = process.env.EMAIL_HOST || "smtp.gmail.com";
   const port = Number(process.env.EMAIL_PORT || 587);
   const user = process.env.EMAIL_USER;
-  const pass = process.env.EMAIL_PASS;
+  // Gmail App Passwords are shown with spaces for readability — strip them
+  const pass = (process.env.EMAIL_PASS || "").replace(/\s+/g, "");
 
   if (!user || !pass) {
-    throw new Error("EMAIL_USER and EMAIL_PASS are required");
+    throw new Error("EMAIL_USER and EMAIL_PASS are required in .env");
   }
 
   const secure = port === 465;

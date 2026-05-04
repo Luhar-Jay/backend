@@ -64,6 +64,29 @@ function signRefreshTokenForUser(user) {
   );
 }
 
+/** Dev utility — POST /auth/test-mail?to=you@example.com */
+export const testMail = async (req, res) => {
+  const to = req.query.to || req.body.to;
+  if (!to) {
+    return res.status(400).json({ success: false, message: "Provide ?to=email in query or body" });
+  }
+  try {
+    await sendEmail(
+      to,
+      "SMTP Test — CRM",
+      `<p>SMTP is working. Sent at ${new Date().toISOString()}</p>`
+    );
+    return res.status(200).json({ success: true, message: `Test email sent to ${to}` });
+  } catch (err) {
+    console.error("testMail error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "SMTP failed",
+      error: err?.message ?? String(err),
+    });
+  }
+};
+
 export const registerUser = async (req, res) => {
   try {
     const {
@@ -134,6 +157,7 @@ export const registerUser = async (req, res) => {
 
     const verifyLink = `${process.env.BACKEND_URL || `${req.protocol}://${req.get("host")}`}/api/v1/auth/verify-email?token=${emailVerificationToken}`;
 
+    let emailError = null;
     try {
       await sendEmail(
         newUser.email,
@@ -147,7 +171,8 @@ export const registerUser = async (req, res) => {
         })
       );
     } catch (mailError) {
-      console.error("Error sending verification email:", mailError);
+      console.error("❌ Error sending verification email:", mailError?.message ?? mailError);
+      emailError = mailError?.message ?? "Unknown mail error";
     }
 
     // Step 4: Prepare response (exclude password)
@@ -157,7 +182,11 @@ export const registerUser = async (req, res) => {
     // Step 5: Send response
     return res.status(201).json({
       success: true,
-      message: "User registered successfully. Please verify your email before login.",
+      message: emailError
+        ? "User registered but verification email could not be sent. Contact support."
+        : "User registered successfully. Please verify your email before login.",
+      emailSent: !emailError,
+      ...(emailError && process.env.NODE_ENV !== "production" && { emailError }),
       user: userResponse,
     });
   } catch (error) {
