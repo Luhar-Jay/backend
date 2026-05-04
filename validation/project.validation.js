@@ -5,7 +5,7 @@ const bearerAuth = [{ bearerAuth: [] }];
 export const CreateProjectBodySchema = z
   .object({
     projectName: z.string().min(1, 'Project name is required').openapi({ example: 'TMS Backend' }),
-    description: z.string().min(1, 'Description is required').openapi({ example: 'Task management backend API' }),
+    description: z.string().optional().openapi({ example: 'Task management backend API' }),
   })
   .openapi('CreateProjectBody');
 
