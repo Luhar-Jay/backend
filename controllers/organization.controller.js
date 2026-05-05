@@ -194,17 +194,18 @@ export const sendInvite = async (req, res) => {
       invitedUser: userId,
     });
 
-    const inviteUrl = `${getFrontendUrl()}/invites`;
-    sendEmail(
-      userToInvite.email,
-      `You've been invited to join ${org.name}`,
-      orgInviteTemplate({
-        userName: userToInvite.name,
-        adminName: req.user.name,
-        orgName: org.name,
-        inviteUrl,
-      })
-    ).catch((err) => console.error("Invite email failed:", err));
+    // sendEmail disabled — uncomment to send org invite email to user
+    // const inviteUrl = `${getFrontendUrl()}/invites`;
+    // sendEmail(
+    //   userToInvite.email,
+    //   `You've been invited to join ${org.name}`,
+    //   orgInviteTemplate({
+    //     userName: userToInvite.name,
+    //     adminName: req.user.name,
+    //     orgName: org.name,
+    //     inviteUrl,
+    //   })
+    // ).catch((err) => console.error("Invite email failed:", err));
 
     return res.status(201).json({
       success: true,
@@ -429,21 +430,22 @@ export const sendJoinRequest = async (req, res) => {
     });
 
     // Notify the org admin via email
-    const admin = await User.findById(org.createdBy);
-    if (admin?.email) {
-      sendEmail(
-        admin.email,
-        `New join request for ${org.name}`,
-        joinRequestTemplate({
-          adminName: admin.name,
-          userName: req.user.name,
-          userEmail: req.user.email,
-          orgName: org.name,
-          message: message || "",
-          frontendUrl: getFrontendUrl(),
-        })
-      ).catch((err) => console.error("Join request email failed:", err));
-    }
+    // sendEmail disabled — uncomment to notify org admin of new join request
+    // const admin = await User.findById(org.createdBy);
+    // if (admin?.email) {
+    //   sendEmail(
+    //     admin.email,
+    //     `New join request for ${org.name}`,
+    //     joinRequestTemplate({
+    //       adminName: admin.name,
+    //       userName: req.user.name,
+    //       userEmail: req.user.email,
+    //       orgName: org.name,
+    //       message: message || "",
+    //       frontendUrl: getFrontendUrl(),
+    //     })
+    //   ).catch((err) => console.error("Join request email failed:", err));
+    // }
 
     return res.status(201).json({
       success: true,

@@ -71,17 +71,18 @@ export const testMail = async (req, res) => {
     return res.status(400).json({ success: false, message: "Provide ?to=email in query or body" });
   }
   try {
-    await sendEmail(
-      to,
-      "SMTP Test — CRM",
-      `<p>SMTP is working. Sent at ${new Date().toISOString()}</p>`
-    );
-    return res.status(200).json({ success: true, message: `Test email sent to ${to}` });
+    // sendEmail disabled — uncomment to test Resend configuration
+    // await sendEmail(
+    //   to,
+    //   "SMTP Test — CRM",
+    //   `<p>SMTP is working. Sent at ${new Date().toISOString()}</p>`
+    // );
+    return res.status(200).json({ success: true, message: `Test email send is currently disabled` });
   } catch (err) {
     console.error("testMail error:", err);
     return res.status(500).json({
       success: false,
-      message: "SMTP failed",
+      message: "Email send failed",
       error: err?.message ?? String(err),
     });
   }
@@ -127,9 +128,6 @@ export const registerUser = async (req, res) => {
       });
     }
 
-    const emailVerificationToken = crypto.randomBytes(32).toString("hex");
-    const emailVerificationExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
     // Step 3: Create a new user (auto-hash via pre('save'))
     const newUser = await User.create({
       name,
@@ -150,37 +148,36 @@ export const registerUser = async (req, res) => {
       bankIFSC,
       bankBranch,
       gender,
-      isEmailVerified: false,
-      emailVerificationToken,
-      emailVerificationExpiresAt,
+      isEmailVerified: true,
+      emailVerificationToken: null,
+      emailVerificationExpiresAt: null,
     });
 
-    const verifyLink = `${process.env.BACKEND_URL || `${req.protocol}://${req.get("host")}`}/api/v1/auth/verify-email?token=${emailVerificationToken}`;
-
-    // Step 4: Respond immediately — email sends in background (no SMTP wait)
+    // Step 4: Respond
     const userResponse = newUser.toObject();
     delete userResponse.password;
 
     res.status(201).json({
       success: true,
-      message: "User registered successfully. Please verify your email before login.",
+      message: "User registered successfully.",
       user: userResponse,
     });
 
-    // Fire-and-forget after response is sent
-    sendEmail(
-      newUser.email,
-      "Verify your email address",
-      verifyEmailTemplate({
-        name: newUser.name,
-        verifyUrl: verifyLink,
-        expiryMinutes: 10,
-        appName: "Task Management System",
-        supportEmail: process.env.SUPPORT_EMAIL || "",
-      })
-    ).catch((mailError) => {
-      console.error("❌ Verification email failed for", newUser.email, "—", mailError?.message ?? mailError);
-    });
+    // Email verification disabled — uncomment to re-enable
+    // const verifyLink = `${process.env.BACKEND_URL || `${req.protocol}://${req.get("host")}`}/api/v1/auth/verify-email?token=${emailVerificationToken}`;
+    // sendEmail(
+    //   newUser.email,
+    //   "Verify your email address",
+    //   verifyEmailTemplate({
+    //     name: newUser.name,
+    //     verifyUrl: verifyLink,
+    //     expiryMinutes: 10,
+    //     appName: "Task Management System",
+    //     supportEmail: process.env.SUPPORT_EMAIL || "",
+    //   })
+    // ).catch((mailError) => {
+    //   console.error("Verification email failed for", newUser.email, "—", mailError?.message ?? mailError);
+    // });
   } catch (error) {
     console.error("Error registering user:", error);
     return res.status(500).json({
@@ -322,12 +319,13 @@ export const loginUser = async (req, res) => {
       });
     }
 
-    if (!user.isEmailVerified) {
-      return res.status(403).json({
-        success: false,
-        message: "Please verify your email before logging in",
-      });
-    }
+    // Email verification check disabled — uncomment to re-enable
+    // if (!user.isEmailVerified) {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: "Please verify your email before logging in",
+    //   });
+    // }
 
     if (user.isActive === false) {
       return res.status(403).json({

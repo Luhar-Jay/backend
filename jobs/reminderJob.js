@@ -123,15 +123,17 @@ async function trySendReminderForEvent(ev) {
     return "failed";
   }
 
+  // sendEmail disabled — uncomment to send event reminder emails to attendees
+  // let sentOk = 0;
+  // for (const to of recipients) {
+  //   try {
+  //     await sendEmail(to, `Reminder: ${ev.title}`, html);
+  //     sentOk += 1;
+  //   } catch (err) {
+  //     console.error("[reminderJob] Email failed", { to, id: String(ev._id), err: err.message });
+  //   }
+  // }
   let sentOk = 0;
-  for (const to of recipients) {
-    try {
-      await sendEmail(to, `Reminder: ${ev.title}`, html);
-      sentOk += 1;
-    } catch (err) {
-      console.error("[reminderJob] Email failed", { to, id: String(ev._id), err: err.message });
-    }
-  }
 
   if (sentOk > 0) {
     await Event.updateOne({ _id: ev._id }, { $set: { reminderSent: true } });

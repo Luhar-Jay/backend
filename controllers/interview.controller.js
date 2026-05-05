@@ -156,12 +156,14 @@ export const setInterviewResult = async (req, res) => {
     const applicant = interview.applicant;
     if (result === "passed") {
       applicant.stage = "offer";
-      const html = hiringStatusTemplate({ name: applicant.name, status: "offer" });
-      await sendEmail(applicant.email, "Job Offer — Congratulations!", html);
+      // sendEmail disabled — uncomment to notify applicant of job offer after interview pass
+      // const html = hiringStatusTemplate({ name: applicant.name, status: "offer" });
+      // await sendEmail(applicant.email, "Job Offer — Congratulations!", html);
     } else if (result === "failed") {
       applicant.stage = "rejected";
-      const html = hiringStatusTemplate({ name: applicant.name, status: "rejected" });
-      await sendEmail(applicant.email, "Your Application Status", html);
+      // sendEmail disabled — uncomment to notify applicant of rejection after interview fail
+      // const html = hiringStatusTemplate({ name: applicant.name, status: "rejected" });
+      // await sendEmail(applicant.email, "Your Application Status", html);
     }
     await applicant.save();
 

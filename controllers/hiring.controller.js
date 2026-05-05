@@ -280,11 +280,13 @@ export const updateStage = async (req, res) => {
     await hiring.save();
 
     if (stage === "offer") {
-      const html = hiringStatusTemplate({ name: hiring.name, status: "offer" });
-      await sendEmail(hiring.email, "Job Offer — Congratulations!", html).catch(() => {});
+      // sendEmail disabled — uncomment to notify applicant of job offer
+      // const html = hiringStatusTemplate({ name: hiring.name, status: "offer" });
+      // await sendEmail(hiring.email, "Job Offer — Congratulations!", html).catch(() => {});
     } else if (stage === "rejected") {
-      const html = hiringStatusTemplate({ name: hiring.name, status: "rejected" });
-      await sendEmail(hiring.email, "Your Application Status", html).catch(() => {});
+      // sendEmail disabled — uncomment to notify applicant of rejection
+      // const html = hiringStatusTemplate({ name: hiring.name, status: "rejected" });
+      // await sendEmail(hiring.email, "Your Application Status", html).catch(() => {});
     }
 
     return res.status(200).json({ success: true, hiring });
@@ -334,7 +336,8 @@ export const convertToUser = async (req, res) => {
       email: hiring.email,
       tempPassword,
     });
-    await sendEmail(hiring.email, "Welcome to the team!", html).catch(() => {});
+    // sendEmail disabled — uncomment to send welcome email with temp credentials
+    // await sendEmail(hiring.email, "Welcome to the team!", html).catch(() => {});
 
     return res.status(201).json({
       success: true,

@@ -88,7 +88,8 @@ async function persistLeaveStatusChange(leave, status, adminComment) {
     fromDate: leave.fromDate,
     toDate: leave.toDate,
   });
-  await sendEmail(user.email, "Leave Status Update", html);
+  // sendEmail disabled — uncomment to notify employee of leave approval/rejection
+  // await sendEmail(user.email, "Leave Status Update", html);
 }
 
 function leaveEmailActionBaseUrl() {
@@ -247,8 +248,9 @@ export const applyLeave = async (req, res) => {
       reviewInAppUrl,
     });
 
-    await sendEmail(hrEmail, "New Leave Request Submitted", html);
-    console.log("Email sent to HR");
+    // sendEmail disabled — uncomment to notify HR of new leave request
+    // await sendEmail(hrEmail, "New Leave Request Submitted", html);
+    console.log("Leave request submitted (email disabled)");
     res.status(201).json({
       success: true,
       message: "Leave request applied successfully",
