@@ -1,22 +1,31 @@
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
+
+function createTransport() {
+  const host = process.env.EMAIL_HOST || "smtp.gmail.com";
+  const port = Number(process.env.EMAIL_PORT || 587);
+  const user = process.env.EMAIL_USER;
+  const pass = (process.env.EMAIL_PASS || "").replace(/\s+/g, "");
+
+  if (!user || !pass) {
+    throw new Error("EMAIL_USER and EMAIL_PASS are required in .env");
+  }
+
+  const secure = port === 465;
+
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: { user, pass },
+    ...(port === 587 ? { requireTLS: true } : {}),
+    tls: { minVersion: "TLSv1.2" },
+  });
+}
 
 export const sendEmail = async (to, subject, html) => {
-  if (!process.env.RESEND_API_KEY) {
-    console.warn("[sendEmail] RESEND_API_KEY not set — email skipped");
-    return;
-  }
+  const transporter = createTransport();
+  const from = process.env.EMAIL_FROM || `CRM <${process.env.EMAIL_USER}>`;
 
-  const resend = new Resend(process.env.RESEND_API_KEY);
-  const from =
-    process.env.EMAIL_FROM ||
-    `CRM <${process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev"}>`;
-
-  const { data, error } = await resend.emails.send({ from, to, subject, html });
-
-  if (error) {
-    console.error("Resend error sending email", error);
-    throw new Error(error.message ?? "Failed to send email");
-  }
-
-  console.log("Email sent via Resend", { id: data?.id, to, subject });
+  const info = await transporter.sendMail({ from, to, subject, html });
+  console.log("Email sent", { messageId: info.messageId, to });
 };
