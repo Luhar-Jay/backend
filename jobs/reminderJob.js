@@ -106,13 +106,6 @@ async function trySendReminderForEvent(ev) {
   const reminderAt = startMs - mins * 60_000;
   if (reminderAt > Date.now()) return "skipped";
 
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.warn(
-      "[reminderJob] Skipping send — set EMAIL_USER and EMAIL_PASS in .env (SMTP required)"
-    );
-    return "failed";
-  }
-
   const html = eventReminderTemplate(ev);
   const recipients = await collectRecipients(ev);
   if (recipients.length === 0) {
@@ -188,17 +181,6 @@ async function runReminderCheckForEventId(id) {
 }
 
 export function startReminderJob() {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.warn(
-      "[reminderJob] EMAIL_USER and EMAIL_PASS are not set — calendar reminder emails will not send until SMTP is configured."
-    );
-  }
-  if ((process.env.EMAIL_HOST || "").includes("mailtrap")) {
-    console.log(
-      "[reminderJob] Using Mailtrap: messages appear in the Mailtrap inbox (https://mailtrap.io), not a real mailbox."
-    );
-  }
-
   cron.schedule("* * * * *", () => {
     processReminderTick().catch((err) => console.error("reminderJob error", err));
   });
