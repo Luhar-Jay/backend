@@ -36,6 +36,15 @@ const taskFileStorage = new CloudinaryStorage({
   },
 });
 
+const receiptStorage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: "TMS_uploads/receipts",
+    resource_type: "auto",
+    allowed_formats: ["jpg", "jpeg", "png", "webp", "pdf"],
+  },
+});
+
 export const upload = multer({ storage: resumeStorage });
 export const uploadImage = multer({ storage: imageStorage });
 export const uploadChatFile = multer({
@@ -45,4 +54,8 @@ export const uploadChatFile = multer({
 export const uploadTaskFile = multer({
   storage: taskFileStorage,
   limits: { fileSize: 25 * 1024 * 1024 },
+});
+export const uploadReceiptFile = multer({
+  storage: receiptStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
 });

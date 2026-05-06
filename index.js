@@ -25,6 +25,9 @@ import interviewRoutes from "./routes/interview.routes.js";
 import clientRoutes from "./routes/client.routes.js";
 import leadRoutes from "./routes/lead.routes.js";
 import contactLogRoutes from "./routes/contactLog.routes.js";
+import expensesRoutes from "./routes/expenses.routes.js";
+import expenseCategoryRoutes from "./routes/expenseCategory.routes.js";
+
 import { startReminderJob } from "./jobs/reminderJob.js";
 import { initSocket } from "./utils/socket.js";
 import cookieParser from "cookie-parser";
@@ -38,6 +41,7 @@ const allowedOrigins = [
     .map((s) => s.trim())
     .filter(Boolean),
   "https://frontend-zeta-eight-57.vercel.app",
+  "http://localhost:5051"
 ];
 app.use(cors({
   origin: (origin, callback) => {
@@ -84,6 +88,8 @@ app.use("/api/v1/interviews", interviewRoutes);
 app.use("/api/v1/clients", clientRoutes);
 app.use("/api/v1/leads", leadRoutes);
 app.use("/api/v1/contact-logs", contactLogRoutes);
+app.use("/api/v1/expenses", expensesRoutes);
+app.use("/api/v1/expense-categories", expenseCategoryRoutes);
 
 const swaggerDocument = generateOpenAPIDocument();
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
