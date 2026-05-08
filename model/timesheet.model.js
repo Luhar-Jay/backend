@@ -56,5 +56,7 @@ timesheetEntrySchema.pre("save", function (next) {
   next();
 });
 
+timesheetEntrySchema.index({ user: 1, date: 1 });
+
 const TimesheetEntry = mongoose.model("TimesheetEntry", timesheetEntrySchema);
 export default TimesheetEntry;

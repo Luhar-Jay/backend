@@ -1,6 +1,13 @@
 import ChatGroup from "../model/chatGroup.model.js";
 import ChatMessage from "../model/chat.model.js";
 import { reactionPopulate } from "../utils/chatReaction.js";
+import { prepareMessageForViewer } from "../utils/chatUtils.js";
+
+const replyToPopulate = {
+  path: "replyTo",
+  select: "_id message attachments sender deletedFor",
+  populate: { path: "sender", select: "name" },
+};
 
 const groupPopulate = [
   { path: "members", select: "name profileImage" },
@@ -166,11 +173,7 @@ export const getGroupMessages = async (req, res) => {
       .limit(limit)
       .populate("sender", "name profileImage")
       .populate("mentions", "name profileImage")
-      .populate({
-        path: "replyTo",
-        select: "_id message attachments sender",
-        populate: { path: "sender", select: "name" },
-      })
+      .populate(replyToPopulate)
       .populate(reactionPopulate);
 
     const total = await ChatMessage.countDocuments({
@@ -178,9 +181,14 @@ export const getGroupMessages = async (req, res) => {
       deletedFor: { $nin: [userId] },
     });
 
+    const prepared = messages
+      .map((m) => m.toObject())
+      .map((m) => prepareMessageForViewer(m, userId))
+      .reverse();
+
     return res.status(200).json({
       success: true,
-      data: messages.reverse(),
+      data: prepared,
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {

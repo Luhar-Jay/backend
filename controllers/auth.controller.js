@@ -8,11 +8,17 @@ import {
 import crypto from "crypto";
 import { sendEmail } from "../utils/mailService/sendMail.js";
 import { verifyEmailTemplate } from "../utils/mailService/verifyEmailTemplate.js";
+import { passwordResetTemplate } from "../utils/mailService/passwordResetTemplate.js";
 import {
   setAuthCookies,
-  setAccessCookie,
   clearAuthCookies,
+  COOKIE_REFRESH,
 } from "../utils/authCookies.js";
+import {
+  storeRefreshToken,
+  isRefreshTokenValid,
+  revokeRefreshToken,
+} from "../utils/refreshTokenStore.js";
 
 const buildLoginRedirectUrl = () => {
   if (process.env.FRONTEND_LOGIN_URL) return process.env.FRONTEND_LOGIN_URL;
@@ -355,6 +361,9 @@ export const loginUser = async (req, res) => {
     const refreshToken = signRefreshTokenForUser(user);
 
     setAuthCookies(res, accessToken, refreshToken);
+    storeRefreshToken(user._id, refreshToken).catch((err) =>
+      console.error("storeRefreshToken failed:", err)
+    );
 
     const userResponse = user.toObject();
     delete userResponse.password;
@@ -765,6 +774,12 @@ export const deleteUser = async (req, res) => {
 
 export const logoutUser = async (req, res) => {
   try {
+    const rawRefresh = req.cookies?.[COOKIE_REFRESH];
+    if (rawRefresh) {
+      await revokeRefreshToken(rawRefresh).catch((err) =>
+        console.error("revokeRefreshToken failed:", err)
+      );
+    }
     clearAuthCookies(res);
 
     return res.status(200).json({
@@ -781,9 +796,9 @@ export const logoutUser = async (req, res) => {
 };
 
 export const refreshToken = async (req, res) => {
-  const refreshToken = req.cookies?.refreshToken;
+  const rawRefresh = req.cookies?.[COOKIE_REFRESH];
   try {
-    if (!refreshToken) {
+    if (!rawRefresh) {
       return res.status(400).json({
         success: false,
         message: "Refresh token is required",
@@ -791,7 +806,7 @@ export const refreshToken = async (req, res) => {
     }
     let decoded;
     try {
-      decoded = jwt.verify(refreshToken, refreshJwtSecret());
+      decoded = jwt.verify(rawRefresh, refreshJwtSecret());
     } catch (e) {
       const name = e && typeof e === "object" ? e.name : "";
       const message =
@@ -811,6 +826,17 @@ export const refreshToken = async (req, res) => {
         message: "Invalid refresh token. Please sign in again.",
       });
     }
+
+    // Validate token is in the allowlist (prevents stolen-token reuse after logout)
+    const valid = await isRefreshTokenValid(rawRefresh, decoded.id);
+    if (!valid) {
+      return res.status(401).json({
+        success: false,
+        code: "REFRESH_INVALID",
+        message: "Refresh token has been revoked. Please sign in again.",
+      });
+    }
+
     const user = await User.findById(decoded.id).select("-password");
     if (!user) {
       return res.status(401).json({
@@ -827,10 +853,24 @@ export const refreshToken = async (req, res) => {
           "Your account has been deactivated. Please contact an administrator to restore access.",
       });
     }
-    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRES_IN,
-    });
-    setAccessCookie(res, token);
+
+    // Rotate: revoke old token and issue a fresh pair
+    await revokeRefreshToken(rawRefresh).catch((err) =>
+      console.error("revokeRefreshToken failed:", err)
+    );
+
+    const newAccessToken = jwt.sign(
+      { id: user._id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN }
+    );
+    const newRefreshToken = signRefreshTokenForUser(user);
+
+    setAuthCookies(res, newAccessToken, newRefreshToken);
+    storeRefreshToken(user._id, newRefreshToken).catch((err) =>
+      console.error("storeRefreshToken failed:", err)
+    );
+
     return res.status(200).json({
       success: true,
       message: "Token refreshed successfully",
@@ -839,6 +879,107 @@ export const refreshToken = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Error refreshing token",
+      error: error.message,
+    });
+  }
+};
+
+export const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email?.trim()) {
+      return res.status(400).json({ success: false, message: "Email is required" });
+    }
+
+    const user = await User.findOne({ email: email.trim().toLowerCase() });
+
+    // Return success regardless — prevents email enumeration
+    if (!user) {
+      return res.status(200).json({
+        success: true,
+        message: "If that email is registered, you will receive a reset link shortly.",
+      });
+    }
+
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const hashedToken = crypto.createHash("sha256").update(rawToken).digest("hex");
+
+    user.passwordResetToken = hashedToken;
+    user.passwordResetExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+    await user.save({ validateBeforeSave: false });
+
+    const resetUrl = `${getFrontendBaseUrl()}/reset-password?token=${rawToken}`;
+
+    sendEmail(
+      user.email,
+      "Reset your password",
+      passwordResetTemplate({
+        name: user.name,
+        resetUrl,
+        expiryMinutes: 15,
+        appName: "CRM",
+      })
+    ).catch((err) => console.error("Password reset email failed:", err));
+
+    return res.status(200).json({
+      success: true,
+      message: "If that email is registered, you will receive a reset link shortly.",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error processing request",
+      error: error.message,
+    });
+  }
+};
+
+export const resetPassword = async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { password } = req.body;
+
+    if (!token || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Token and new password are required",
+      });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 8 characters",
+      });
+    }
+
+    const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+
+    const user = await User.findOne({
+      passwordResetToken: hashedToken,
+      passwordResetExpiresAt: { $gt: new Date() },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired reset token",
+      });
+    }
+
+    user.password = password; // pre-save hook hashes it
+    user.passwordResetToken = null;
+    user.passwordResetExpiresAt = null;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset successfully. You can now sign in.",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error resetting password",
       error: error.message,
     });
   }
@@ -969,6 +1110,9 @@ export const googleAuthCallback = async (req, res) => {
     const accessToken = signJwtForUser(user);
     const refreshJwt = signRefreshTokenForUser(user);
     setAuthCookies(res, accessToken, refreshJwt);
+    storeRefreshToken(user._id, refreshJwt).catch((err) =>
+      console.error("storeRefreshToken (google) failed:", err)
+    );
     return res.redirect(`${frontendLogin}?provider=google`);
   } catch (err) {
     const message =

@@ -50,6 +50,7 @@ const leaveSchema = new mongoose.Schema({
 
 // Prevents duplicate leave records from concurrent submissions (BUG-011)
 leaveSchema.index({ user: 1, fromDate: 1, toDate: 1 }, { unique: true });
+leaveSchema.index({ user: 1, status: 1 });
 
 const Leave = mongoose.model("Leave", leaveSchema);
 export default Leave;

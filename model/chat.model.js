@@ -69,6 +69,23 @@ const chatMessageSchema = new mongoose.Schema(
         },
       },
     ],
+    // Group read receipts: array of user IDs who have read this message
+    readBy: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+    // Forwarded message tracking
+    forwardedFrom: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ChatMessage",
+      default: null,
+    },
+    isForwarded: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true },
 );

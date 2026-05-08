@@ -15,6 +15,8 @@ import {
   refreshToken,
   verifyUserEmail,
   testMail,
+  forgotPassword,
+  resetPassword,
 } from '../controllers/auth.controller.js';
 import { authenticateMiddleware } from '../middleware/authenticate.middleware.js';
 import { authorize } from '../middleware/authorize.middleware.js';
@@ -32,6 +34,8 @@ import { authLimiter, refreshLimiter } from '../utils/rateLimit.js';
 const router = express.Router();
 
 router.post('/register', authLimiter, validate({ body: RegisterBodySchema }), registerUser);
+router.post('/forgot-password', authLimiter, forgotPassword);
+router.post('/reset-password/:token', authLimiter, resetPassword);
 // Dev-only: POST /auth/test-mail?to=you@example.com  — tests SMTP config
 router.post('/test-mail', testMail);
 router.post('/login', authLimiter, validate({ body: LoginBodySchema }), loginUser);

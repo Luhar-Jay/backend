@@ -6,6 +6,13 @@ import { reactionPopulate } from "./chatReaction.js";
 import { pubClient, subClient } from "./redis.js";
 import { createAdapter } from "@socket.io/redis-adapter";
 import { COOKIE_ACCESS, parseCookieHeader } from "./authCookies.js";
+import { prepareMessageForViewer } from "./chatUtils.js";
+
+const replyToPopulate = {
+  path: "replyTo",
+  select: "_id message attachments sender deletedFor",
+  populate: { path: "sender", select: "name" },
+};
 
 const redisAvailable = pubClient !== null && subClient !== null;
 
@@ -127,16 +134,16 @@ export function initSocket(httpServer) {
           { path: "receiver", select: "name profileImage" },
           { path: "mentions", select: "name profileImage" },
           reactionPopulate,
-          {
-            path: "replyTo",
-            select: "_id message attachments sender",
-            populate: { path: "sender", select: "name" },
-          },
+          replyToPopulate,
         ]);
 
-        io.to(receiverId).emit("message:receive", populated);
-        io.to(userId).emit("message:receive", populated);
-        callback?.({ success: true, data: populated });
+        const msgPlain = populated.toObject();
+        const forReceiver = prepareMessageForViewer({ ...msgPlain }, receiverId);
+        const forSender = prepareMessageForViewer({ ...msgPlain }, userId);
+
+        io.to(receiverId).emit("message:receive", forReceiver);
+        io.to(userId).emit("message:receive", forSender);
+        callback?.({ success: true, data: forSender });
       } catch (err) {
         console.error("Message error:", err);
         callback?.({ success: false, error: "Server error" });
@@ -226,15 +233,16 @@ export function initSocket(httpServer) {
           { path: "sender", select: "name profileImage" },
           { path: "mentions", select: "name profileImage" },
           reactionPopulate,
-          {
-            path: "replyTo",
-            select: "_id message attachments sender",
-            populate: { path: "sender", select: "name" },
-          },
+          replyToPopulate,
         ]);
 
-        io.to(`group:${groupId}`).emit("group:message:receive", { groupId, message: populated });
-        callback?.({ success: true, data: populated });
+        // Strip internal deletedFor from replyTo before broadcasting to all group members.
+        // Per-member content scrubbing is handled when members fetch history via HTTP.
+        const msgPlain = populated.toObject();
+        const forGroup = prepareMessageForViewer({ ...msgPlain }, "__no_user__");
+
+        io.to(`group:${groupId}`).emit("group:message:receive", { groupId, message: forGroup });
+        callback?.({ success: true, data: forGroup });
       } catch (err) {
         console.error("Group message error:", err);
         callback?.({ success: false, error: "Server error" });
@@ -291,6 +299,42 @@ export function initSocket(httpServer) {
     // Join a newly created group room
     socket.on("group:join", ({ groupId }) => {
       socket.join(`group:${groupId}`);
+    });
+
+    // ── Read receipts for group messages ─────────────────────────────────────
+    socket.on("group:messages:read", async ({ groupId, messageIds }) => {
+      try {
+        if (!Array.isArray(messageIds) || !messageIds.length) return;
+        await ChatMessage.updateMany(
+          {
+            _id: { $in: messageIds },
+            group: groupId,
+            sender: { $ne: userId },
+            readBy: { $nin: [userId] },
+          },
+          { $addToSet: { readBy: userId } }
+        );
+        socket.to(`group:${groupId}`).emit("group:messages:read", { userId, groupId, messageIds });
+      } catch (err) {
+        console.error("Group read receipt error:", err);
+      }
+    });
+
+    // ── Pin notifications ────────────────────────────────────────────────────
+    socket.on("message:pinned", ({ receiverId, groupId, messageId }) => {
+      if (groupId) {
+        socket.to(`group:${groupId}`).emit("message:pinned", { groupId, messageId });
+      } else if (receiverId) {
+        io.to(receiverId).emit("message:pinned", { receiverId: userId, messageId });
+      }
+    });
+
+    socket.on("message:unpinned", ({ receiverId, groupId, messageId }) => {
+      if (groupId) {
+        socket.to(`group:${groupId}`).emit("message:unpinned", { groupId, messageId });
+      } else if (receiverId) {
+        io.to(receiverId).emit("message:unpinned", { receiverId: userId, messageId });
+      }
     });
 
     socket.on("disconnect", async () => {

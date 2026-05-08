@@ -3,6 +3,13 @@ import User from "../model/user.model.js";
 import { getOnlineUsers, notifyChatMessageReactionsUpdated } from "../utils/socket.js";
 import { toggleMessageReaction, reactionPopulate } from "../utils/chatReaction.js";
 import { getOrgCreatorUserIds, resolveOrgAdminId } from "../utils/teamScope.js";
+import { prepareMessageForViewer } from "../utils/chatUtils.js";
+
+const replyToPopulate = {
+  path: "replyTo",
+  select: "_id message attachments sender deletedFor",
+  populate: { path: "sender", select: "name" },
+};
 
 // POST /api/v1/chat/upload — upload a file/image for chat (returns url + metadata)
 export const uploadChatFileController = async (req, res) => {
@@ -169,11 +176,7 @@ export const getMessages = async (req, res) => {
       .populate("sender", "name profileImage")
       .populate("receiver", "name profileImage")
       .populate({ path: "mentions", select: "name profileImage" })
-      .populate({
-        path: "replyTo",
-        select: "_id message attachments sender",
-        populate: { path: "sender", select: "name" },
-      })
+      .populate(replyToPopulate)
       .populate(reactionPopulate);
 
     const total = await ChatMessage.countDocuments({
@@ -184,9 +187,15 @@ export const getMessages = async (req, res) => {
       deletedFor: { $nin: [userId] },
     });
 
+    const viewerIdStr = String(userId);
+    const prepared = messages
+      .map((m) => m.toObject())
+      .map((m) => prepareMessageForViewer(m, viewerIdStr))
+      .reverse();
+
     res.status(200).json({
       success: true,
-      data: messages.reverse(),
+      data: prepared,
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {
@@ -237,5 +246,83 @@ export const getOnlineUsersList = async (_req, res) => {
     res.json({ success: true, data: users });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// POST /api/v1/chat/message/:messageId/forward — forward a message to another DM or group
+export const forwardMessage = async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { receiverId, groupId } = req.body;
+    const userId = req.user._id;
+
+    if (!receiverId && !groupId) {
+      return res.status(400).json({ success: false, message: "receiverId or groupId is required" });
+    }
+
+    const original = await ChatMessage.findById(messageId).lean();
+    if (!original) {
+      return res.status(404).json({ success: false, message: "Message not found" });
+    }
+
+    const forwarded = await ChatMessage.create({
+      sender: userId,
+      receiver: receiverId ?? null,
+      group: groupId ?? null,
+      message: original.message,
+      attachments: original.attachments ?? [],
+      forwardedFrom: messageId,
+      isForwarded: true,
+    });
+
+    const populated = await forwarded.populate([
+      { path: "sender", select: "name profileImage" },
+      { path: "receiver", select: "name profileImage" },
+      reactionPopulate,
+    ]);
+
+    return res.status(201).json({ success: true, data: populated });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// POST /api/v1/chat/groups/:groupId/messages/read — mark group messages as read
+export const markGroupMessagesRead = async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const userId = req.user._id;
+
+    await ChatMessage.updateMany(
+      {
+        group: groupId,
+        readBy: { $nin: [userId] },
+        sender: { $ne: userId },
+      },
+      { $addToSet: { readBy: userId } }
+    );
+
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// GET /api/v1/chat/message/:messageId/read-by — get list of users who read a message
+export const getReadBy = async (req, res) => {
+  try {
+    const { messageId } = req.params;
+
+    const message = await ChatMessage.findById(messageId)
+      .populate("readBy", "name profileImage")
+      .lean();
+
+    if (!message) {
+      return res.status(404).json({ success: false, message: "Message not found" });
+    }
+
+    return res.status(200).json({ success: true, data: message.readBy ?? [] });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

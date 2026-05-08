@@ -83,6 +83,7 @@ const expenseSchema = new mongoose.Schema(
 );
 
 expenseSchema.index({ employee: 1, expenseDate: -1 });
+expenseSchema.index({ employee: 1, status: 1 });
 expenseSchema.index({ organization: 1, status: 1 });
 expenseSchema.index({ organization: 1, expenseDate: -1 });
 

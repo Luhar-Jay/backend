@@ -170,5 +170,7 @@ taskSchema.pre("save", async function (next) {
   next();
 });
 
-const Task = mongoose.model("Task", taskSchema)
-export default Task
+taskSchema.index({ assignedTo: 1, status: 1, dueDate: 1 });
+
+const Task = mongoose.model("Task", taskSchema);
+export default Task;

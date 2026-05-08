@@ -288,7 +288,7 @@ export const acceptInvite = async (req, res) => {
     }
 
     if (invite.expiresAt && invite.expiresAt < new Date()) {
-      return res.status(400).json({
+      return res.status(410).json({
         success: false,
         message: "This invitation has expired",
       });

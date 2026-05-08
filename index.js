@@ -30,6 +30,7 @@ import expenseCategoryRoutes from "./routes/expenseCategory.routes.js";
 
 import { startReminderJob } from "./jobs/reminderJob.js";
 import { initSocket } from "./utils/socket.js";
+import { initChatScheduler } from "./utils/chatScheduler.js";
 import cookieParser from "cookie-parser";
 
 const app = express();
@@ -96,7 +97,8 @@ app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 app.get("/api-docs.json", (req, res) => res.json(swaggerDocument));
 
 const server = http.createServer(app);
-initSocket(server);
+const io = initSocket(server);
+initChatScheduler(io);
 
 const startServer = async () => {
   await connectDB();
