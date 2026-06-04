@@ -59,3 +59,21 @@ export const uploadReceiptFile = multer({
   storage: receiptStorage,
   limits: { fileSize: 10 * 1024 * 1024 },
 });
+
+const noteFileStorage = new CloudinaryStorage({
+  cloudinary,
+  params: async (_req, file) => {
+    const isImage = file.mimetype?.startsWith("image/");
+    const isVideo = file.mimetype?.startsWith("video/");
+    return {
+      folder: "TMS_uploads/notes",
+      resource_type: isImage ? "image" : isVideo ? "video" : "raw",
+      allowed_formats: ["jpg", "jpeg", "png", "webp", "gif", "mp4", "mov", "webm", "pdf", "doc", "docx", "xlsx", "csv"],
+    };
+  },
+});
+
+export const uploadNoteFile = multer({
+  storage: noteFileStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
