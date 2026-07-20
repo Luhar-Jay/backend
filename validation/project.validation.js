@@ -20,6 +20,35 @@ export const ProjectIdParamSchema = z
   .object({ id: z.string().min(1).openapi({ example: '64b1f2c3d4e5f6a7b8c9d0e1' }) })
   .openapi('ProjectIdParam');
 
+export const StatusParamSchema = z
+  .object({
+    id: z.string().min(1).openapi({ example: '64b1f2c3d4e5f6a7b8c9d0e1' }),
+    statusId: z.string().min(1).openapi({ example: '64b1f2c3d4e5f6a7b8c9d0e2' }),
+  })
+  .openapi('ProjectStatusParam');
+
+export const BaseStatusParamSchema = z
+  .object({
+    id: z.string().min(1).openapi({ example: '64b1f2c3d4e5f6a7b8c9d0e1' }),
+    key: z.enum(['pending', 'in_progress', 'review', 'completed']).openapi({ example: 'review' }),
+  })
+  .openapi('ProjectBaseStatusParam');
+
+export const CreateStatusBodySchema = z
+  .object({
+    label: z.string().min(1, 'Status name is required').max(40).openapi({ example: 'Production' }),
+    color: z.string().optional().openapi({ example: 'blue' }),
+  })
+  .openapi('CreateProjectStatusBody');
+
+export const UpdateStatusBodySchema = z
+  .object({
+    label: z.string().min(1).max(40).optional().openapi({ example: 'Released' }),
+    color: z.string().optional().openapi({ example: 'emerald' }),
+    order: z.number().optional().openapi({ example: 2 }),
+  })
+  .openapi('UpdateProjectStatusBody');
+
 export const PaginationQuerySchema = z
   .object({
     page: z.coerce.number().int().positive().optional().openapi({ example: 1 }),

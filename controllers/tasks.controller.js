@@ -62,6 +62,17 @@ const ROLES_CAN_ASSIGN_OTHERS = new Set([
   "hr",
 ]);
 
+// The four static statuses every project always supports.
+export const BASE_STATUS_KEYS = ["pending", "in_progress", "review", "completed"];
+
+// A status is valid for a task if it is a (non-hidden) base status or one of
+// the project's admin-defined custom statuses.
+function isStatusAllowedForProject(projectDoc, status) {
+  const hidden = projectDoc?.hiddenBaseStatuses ?? [];
+  if (BASE_STATUS_KEYS.includes(status)) return !hidden.includes(status);
+  return (projectDoc?.customStatuses ?? []).some((s) => s.key === status);
+}
+
 export const createTask = async (req, res) => {
   const { project, assignedTo, taskName, description, dueDate, priority, status, subtasks, timeEstimate, templateName } = req.body;
 
@@ -71,6 +82,13 @@ export const createTask = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Project not found",
+      });
+    }
+
+    if (status && !isStatusAllowedForProject(projectDoc, status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status for this project",
       });
     }
 
@@ -237,7 +255,7 @@ export const getTasks = async (req, res) => {
     const totalTasks = await Task.countDocuments(query);
 
     const tasks = await Task.find(query)
-      .populate("project", "projectName")
+      .populate("project", "projectName customStatuses hiddenBaseStatuses")
       .populate("assignedTo", "name email role")
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -294,6 +312,17 @@ export const updateTask = async (req, res) => {
     const { status, taskName, priority, description, dueDate, archived, subtasks, timeEstimate, timeLogged, project } = req.body;
 
     if (status) {
+      // Validate the status against the target project's allowed set
+      // (the new project if it's being changed, else the task's current one).
+      const statusProjectId = project || task.project;
+      const statusProject = await Project.findById(statusProjectId).select("customStatuses hiddenBaseStatuses");
+      if (!isStatusAllowedForProject(statusProject, status)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid status for this project",
+        });
+      }
+
       // Start work timer when entering in_progress (not on review)
       if (status === "in_progress" && !task.startTime) {
         task.startTime = new Date();

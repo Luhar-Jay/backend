@@ -107,9 +107,11 @@ const taskSchema = new mongoose.Schema(
       enum: ["low", "medium", "urgent"],
       default: "low",
     },
+    // Base statuses are pending/in_progress/review/completed, but admins can
+    // add custom statuses per project, so this is a free string validated in
+    // the controller against the task's project status set.
     status: {
       type: String,
-      enum: ["pending", "in_progress", "review", "completed"],
       default: "pending",
     },
     queries:{
